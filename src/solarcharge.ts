@@ -11,10 +11,10 @@ export interface AggregatedMetrics {
 }
 
 export interface InverterSettingsPayload {
-  sellFrom: number; // F.eks. 17 (or 0 if deactivated)
-  sellTo: number;   // F.eks. 21 (or 0 if deactivated)
-  buyFrom: number;  // F.eks. 2  (or 0 if deactivated)
-  buyTo: number;    // F.eks. 6  (or 0 if deactivated)
+  sellFrom: number; // E.g. 17 (or 0 if deactivated)
+  sellTo: number;   // E.g. 21 (or 0 if deactivated)
+  buyFrom: number;  // E.g. 2  (or 0 if deactivated)
+  buyTo: number;    // E.g. 6  (or 0 if deactivated)
 }
 
 /**
@@ -26,24 +26,93 @@ export class SolarChargeUploader {
     private readonly plantId: string,
     private readonly serialNum: string,
     private readonly log: Logging,
+    private readonly baseUrl: string = 'https://groshapp.com/test', // Default test server
+    // private readonly baseUrl: string = 'https://compellingsoftware.com/edge', // Production server
   ) {}
 
+  /**
+ * Fetches the current inverter settings from the SolarCharge API backend
+ * @returns The parsed InverterSettingsPayload or null if the request fails
+ */
+  public async getInverterSettings(): Promise<InverterSettingsPayload | null> {
+    try {
+      const params = {
+        plantId: this.plantId,
+        serialNum: this.serialNum,
+        branding: 'sc',
+      };
+      const queryString = new URLSearchParams(params).toString();
+      const url = `${this.baseUrl}/invertersettings?${queryString}`;
+      this.log.debug(`Fetching inverter settings from SolarCharge API: ${url}`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        this.log.error(`SolarCharge API error fetching settings: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      // The API expects a JSON response that matches your PHP schema (sellFrom, sellTo, buyFrom, buyTo)
+      const data = await response.json() as {
+      sellFrom?: string | number;
+      sellTo?: string | number;
+      buyFrom?: string | number;
+      buyTo?: string | number;
+    };
+
+      if (!data) {
+        this.log.error('SolarCharge API returned an empty or invalid JSON response.');
+        return null;
+      }
+
+      // Implicit logic: If the value is "00" (or disabled), we map it to hour 0
+      // Otherwise we convert the text string (e.g. "17") to a pure integer
+      const sellFromHour = data.sellFrom !== '00' && data.sellFrom !== undefined ? parseInt(data.sellFrom.toString(), 10) : 0;
+      const sellToHour   = data.sellTo   !== '00' && data.sellTo   !== undefined ? parseInt(data.sellTo.toString(), 10) : 0;
+    
+      const buyFromHour  = data.buyFrom  !== '00' && data.buyFrom  !== undefined ? parseInt(data.buyFrom.toString(), 10) : 0;
+      const buyToHour    = data.buyTo    !== '00' && data.buyTo    !== undefined ? parseInt(data.buyTo.toString(), 10) : 0;
+
+      // Define the state (On/Off) based on the implicit "00" rule
+      const sellActive = sellFromHour !== 0 || sellToHour !== 0;
+      const buyActive  = buyFromHour  !== 0 || buyToHour  !== 0;
+
+      this.log.info(`[API Get] Successfully retrieved configuration -> Sell Active: ${sellActive} (${sellFromHour}-${sellToHour}) | Buy Active: ${buyActive} (${buyFromHour}-${buyToHour})`);
+
+      // Return data formatted precisely according to your InverterSettingsPayload interface
+      return {
+        sellFrom: sellFromHour,
+        sellTo: sellToHour,
+        buyFrom: buyFromHour,
+        buyTo: buyToHour,
+      };
+
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.log.error(`Could not fetch inverter settings from SolarCharge API: ${errorMsg}`);
+      return null;
+    }
+  }
 
   /**
  * Uploads current SPH settings to the SolarCharge API, mapping 0 to "00" implicitly.
  */
-  public async uploadInverterSettings(settings: InverterSettingsPayload): Promise<void> {
+  public async setInverterSettings(settings: InverterSettingsPayload): Promise<void> {
     try {
-    // Formaterer tallene til 2-cifrede strenge. Hvis tallet er 0, bliver det automatisk til "00"
+    // Formats the numbers as 2-digit strings. If the number is 0, it automatically becomes "00"
       const sellFromStr: string = String(settings.sellFrom).padStart(2, '0');
       const sellToStr: string   = String(settings.sellTo).padStart(2, '0');
     
       const buyFromStr: string  = String(settings.buyFrom).padStart(2, '0');
       const buyToStr: string    = String(settings.buyTo).padStart(2, '0');
-
+      const url = `${this.baseUrl}/invertersettings`;
       const response = await fetch(
-        'https://groshapp.com/test/invertersettings', // Test server
-        // 'https://compellingsoftware.com/edge/invertersettings', // Production server
+        url,
         {
           method: 'POST',
           headers: {
@@ -87,10 +156,10 @@ export class SolarChargeUploader {
     startTime: string,
     endTime: string,
   ): Promise<void> {
+    const url = `${this.baseUrl}/inverterdata`;
     try {
       const response = await fetch(
-        'https://groshapp.com/test/inverterdata', // test server
-        // 'https://gr1.compellingsoftware.com/edge/inverterdata', // production server
+        url, 
         {
           method: 'POST',
           headers: {

@@ -8,7 +8,7 @@ export interface InverterDischargeState {
   enable: boolean;
 }
 
-// Interface til den nye AC Net-opladning (Grid Charging)
+// Interface for the new AC grid charging (Grid Charging)
 export interface InverterAcChargeState {
   acChargeRate: number; // Register 1068 (%)
   acStopSoc: number;    // Register 1069 (%)
@@ -46,7 +46,7 @@ export class GrowattInverterCommands {
       const stopValue  = (toHour << 8) | 0;
       const isEnabled  = enable ? 1 : 0;
 
-      log.info(`[Modbus Skriv] Sætter afladning til: ${enable ? 'AKTIVERET' : 'DEAKTIVERET'} (${fromHour}:00 - ${toHour}:00)`);
+      log.info(`[Modbus Write] Setting discharge to: ${enable ? 'ENABLED' : 'DISABLED'} (${fromHour}:00 - ${toHour}:00)`);
       await modbusClient.writeHoldingRegister(1070, rate);
       await modbusClient.writeHoldingRegister(1071, stopSoc);
       await modbusClient.writeHoldingRegister(1080, startValue);
@@ -54,7 +54,7 @@ export class GrowattInverterCommands {
       await modbusClient.writeHoldingRegister(1082, isEnabled);
       return true;
     } catch (error) {
-      log.error('Fejl under skrivning af afladningsdata til inverter:', error);
+      log.error('Error while writing discharge data to inverter:', error);
       return false;
     }
   }
@@ -63,7 +63,7 @@ export class GrowattInverterCommands {
     try {
       const registers = await modbusClient.readHoldingRegisters(1070, 13);
       if (!registers || registers.length < 13) {
-        throw new Error('Ugyldig registerramme');
+        throw new Error('Invalid register frame');
       }
       const dischargeRate = registers[0];
       const stopSoc       = registers[1];
@@ -72,7 +72,7 @@ export class GrowattInverterCommands {
       const isEnabled     = registers[12] === 1;
       return { dischargeRate, stopSoc, fromHour: rawStart >> 8, toHour: rawStop >> 8, enable: isEnabled };
     } catch (error) {
-      log.error('Kunne ikke læse afladningsindstillinger:', error);
+      log.error('Could not read discharge settings:', error);
       return null;
     }
   }
@@ -111,7 +111,7 @@ export class GrowattInverterCommands {
       const stopValue  = (toHour << 8) | 0;   // e.g., 06:00 -> 0x0600
       const isEnabled  = enable ? 1 : 0;      // param3 & param8 toggles
 
-      log.info(`[Modbus Write] Setting AC Net-Charging to: ${enable ? 'ENABLED' : 'DISABLED'} (${fromHour}:00 - ${toHour}:00)`);
+      log.info(`[Modbus Write] Setting AC grid-Charging to: ${enable ? 'ENABLED' : 'DISABLED'} (${fromHour}:00 - ${toHour}:00)`);
 
       // Write parameters down into the consecutive SPH Holding Registers
       await modbusClient.writeHoldingRegister(1068, acPowerRate); // Reg 1068: AC Charge Power rate %
@@ -120,7 +120,7 @@ export class GrowattInverterCommands {
       await modbusClient.writeHoldingRegister(1076, stopValue);   // Reg 1076: Slot 1 End Time
       await modbusClient.writeHoldingRegister(1077, isEnabled);   // Reg 1077: Slot 1 AC Charge Toggle
 
-      log.info('[Modbus Write] AC Net-Charging registers successfully saved on the inverter.');
+      log.info('[Modbus Write] AC grid-Charging registers successfully saved on the inverter.');
       return true;
     } catch (error) {
       log.error('Failed to write AC charging parameters to inverter over Modbus:', error);
