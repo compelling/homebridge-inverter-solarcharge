@@ -1,0 +1,41 @@
+{
+  "name": "SolaX_Hybrid",
+  "manufacturer": "SolaX Power",
+  "model": "X1/X3 Hybrid Gen 2-5",
+  "phases": 1,
+  "hasBattery": true,
+  "connectionType": "RTU",
+  "connection": {
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 36,
+    "loadPowerRegister": 70,
+    "exportPowerRegister": 39,
+    "importPowerRegister": 40,
+    "batteryChargePowerRegister": 71,
+    "batteryDischargePowerRegister": 72,
+    "batterySocRegister": 109,
+    "scalingFactor": 1
+  },
+  "control": {
+    "dischargeRateRegister": 3107,
+    "dischargeStopSocRegister": 3108,
+    "dischargeStartTimeRegister": 3109,
+    "dischargeStopTimeRegister": 3110,
+    "dischargeEnableRegister": 3111,
+    "chargeRateRegister": 3100,
+    "chargeStopSocRegister": 3101,
+    "chargeStartTimeRegister": 3102,
+    "chargeStopTimeRegister": 3103,
+    "chargeEnableRegister": 3104
+  },
+  "encoding": {
+    "timeFormat": "RawInteger",
+    "endianness": "BigEndian"
+  }
+}

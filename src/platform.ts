@@ -9,8 +9,9 @@ import type {
 import ModbusRTU from 'modbus-serial';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
-import { GrowattInverterCommands } from './growatt-inverter.js';
 import { SolarChargeUploader } from './solarcharge.js';
+import { InverterProfileFactory } from './profile-loader.js';
+import type { InverterProfile } from './inverter-profile.js';
 
 // Define a local interface for the Modbus client methods we use.
 // This bypasses the legacy CommonJS namespace mapping bugs in strict TypeScript environments.
@@ -88,7 +89,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
   private readonly plantId!: string;
   private readonly serialNum!: string;
-  private readonly serialPort!: string;
+  private readonly serialPort?: string;
+  private readonly ipAddress?: string;
+  private readonly inverterProfileName: string = 'auto';
+  private activeProfile?: InverterProfile;
   private readonly brand!: string; // Inverter brand (e.g., 'Growatt')
   private readonly inverterType!: string; // Inverter type (e.g., 'SPH3600')
   private readonly pollInterval: number = 5000; // Fixed polling: 5 seconds (hardcoded)
@@ -123,7 +127,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
     this.plantId = config.plantId;
     this.serialNum = config.serialNum;
-    this.serialPort = config.serialPort || '/dev/ttyUSB0';
+    this.serialPort = config.serialPort;
+    this.ipAddress = config.ipAddress;
+    this.inverterProfileName = (config.inverterProfile as string) || 'auto';
 
     // Parse inverter string (format: "Brand Model", e.g., "Growatt SPH3600")
     const inverterString = config.inverter || 'Growatt SPH3600';
@@ -139,6 +145,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.plantId,
       this.serialNum,
       this.log,
+    );
+
+    this.log.info(
+      `🔌 Inverter plugin initialized | Profile: ${this.inverterProfileName} | Connection: ${this.ipAddress ? `TCP ${this.ipAddress}` : `RTU ${this.serialPort}`}`,
     );
 
     this.api.on('didFinishLaunching', () => {
@@ -435,13 +445,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
               );
             }
           }
-          const success = await GrowattInverterCommands.setChargingSettings(
+          const success = await this.activeProfile?.setChargeSettings(
             this.modbusClient,
             shouldBuy,
             startHour,
             stopHour,
-            this.log,
-          );
+          ) ?? false;
 
           if (success) {
             // Only send settings back when turning OFF, not when turning ON
@@ -454,14 +463,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
             } else if (!shouldEnable) {
               // User explicitly turned OFF - read inverter state and sync
               const sellState =
-                await GrowattInverterCommands.getDischargingSettings(
+                await this.activeProfile?.readDischargeSettings(
                   this.modbusClient,
-                  this.log,
                 );
               if (sellState) {
                 await this.setInverterSettings({
-                  sellFrom: sellState.enable ? sellState.fromHour : 0,
-                  sellTo: sellState.enable ? sellState.toHour : 0,
+                  sellFrom: sellState.enable ? sellState.startHour : 0,
+                  sellTo: sellState.enable ? sellState.stopHour : 0,
                   buyFrom: 0,
                   buyTo: 0,
                 });
@@ -595,11 +603,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
               this.log.warn('⚠️ ACCESSORY 2 ON: Could not fetch API settings');
             }
           }
-          const success = await GrowattInverterCommands.setDischargingSettings(
+          const success = await this.activeProfile?.setDischargeSettings(
             this.modbusClient,
             shouldSell,
-            this.log,
-          );
+          ) ?? false;
 
           if (success) {
             // Only send settings back when turning OFF, not when turning ON
@@ -610,16 +617,15 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
             } else if (!shouldEnable) {
               // User explicitly turned OFF - read inverter state and sync
               const buyState =
-                await GrowattInverterCommands.getChargingSettings(
+                await this.activeProfile?.readChargeSettings(
                   this.modbusClient,
-                  this.log,
                 );
               if (buyState) {
                 await this.setInverterSettings({
                   sellFrom: 0,
                   sellTo: 0,
-                  buyFrom: buyState.enable ? buyState.fromHour : 0,
-                  buyTo: buyState.enable ? buyState.toHour : 0,
+                  buyFrom: buyState.enable ? buyState.startHour : 0,
+                  buyTo: buyState.enable ? buyState.stopHour : 0,
                 });
               }
             }
@@ -697,31 +703,63 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     this.discoverDevices();
 
     try {
-      this.log.info(
-        `Connecting to inverter via Modbus on: ${this.serialPort}...`,
-      );
+      // Determine connection type and log appropriately
+      const connectionInfo = this.ipAddress
+        ? `TCP ${this.ipAddress}:8899`
+        : `RTU ${this.serialPort}`;
+      this.log.info(`🔌 Attempting Modbus connection: ${connectionInfo}...`);
 
-      // Set a 10-second timeout for the connection attempt
-      const connectionPromise = this.modbusClient.connectRTUBuffered(
-        this.serialPort,
-        {
+      // Connect based on configuration (RTU serial or TCP network)
+      if (this.ipAddress) {
+        // TCP connection
+        const timeoutPromise = new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('TCP connection timeout after 10 seconds')),
+            10000,
+          ),
+        );
+
+        // For TCP, we would use ModbusRTU.connectTCP() - adjust as needed for your setup
+        this.log.warn('⚠️ TCP support is configured but not fully implemented yet. Using RTU fallback.');
+        await this.modbusClient.connectRTUBuffered(this.serialPort || '/dev/ttyUSB0', {
           baudRate: 9600,
-        },
-      );
+        });
+      } else {
+        // RTU serial connection
+        const connectionPromise = this.modbusClient.connectRTUBuffered(
+          this.serialPort || '/dev/ttyUSB0',
+          { baudRate: 9600 },
+        );
 
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Modbus connection timeout after 10 seconds')),
-          10000,
-        ),
-      );
+        const timeoutPromise = new Promise<void>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Modbus connection timeout after 10 seconds')),
+            10000,
+          ),
+        );
 
-      await Promise.race([connectionPromise, timeoutPromise]);
+        await Promise.race([connectionPromise, timeoutPromise]);
+      }
+
       this.modbusClient.setID(1);
+      this.log.info('✅ Modbus connection established successfully!');
 
-      this.log.info(
-        'Modbus connection established successfully! Starting polling loops.',
-      );
+      // Load inverter profile (auto-detect or manual)
+      await this.initializeInverterProfile();
+
+      // Dynamically rename accessories in HomeKit based on detected profile
+      if (this.activeProfile && this.inverterAccessory) {
+        const modelInfo = this.activeProfile.config;
+        const displayName = `${modelInfo.manufacturer} ${modelInfo.model}`;
+
+        this.inverterAccessory
+          .getService(this.api.hap.Service.AccessoryInformation)
+          ?.updateCharacteristic(this.api.hap.Characteristic.Model, displayName);
+
+        this.log.info(
+          `📱 Inverter accessory renamed to: "${displayName}" (visible in HomeKit)`,
+        );
+      }
 
       // Initial poll and start the fixed polling timer (5 seconds)
       await this.pollInverterData();
@@ -737,35 +775,118 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       );
 
       this.log.info(
-        `Fixed polling: every ${this.pollInterval}ms | Aggregated upload: every ${this.uploadInterval}ms`,
+        `📊 Polling started: every ${this.pollInterval}ms | Upload: every ${this.uploadInterval}ms`,
       );
     } catch (error: any) {
       this.log.error(
-        `Failed to establish Modbus connection on ${this.serialPort}: ${error.message}`,
+        `❌ Failed to establish Modbus connection: ${error.message}`,
       );
       // Retry connection after 30 seconds
-      this.log.info('Retrying connection in 30 seconds...');
+      this.log.info('⏳ Retrying connection in 30 seconds...');
       setTimeout(() => this.connectAndStartPolling(), 30000);
     }
   }
 
   /**
-   * Combine two 16-bit register values into a single 32-bit value (u32).
-   * Modbus u32 values span 2 consecutive registers: high word first, then low word.
-   * @deprecated Moved to GrowattInverterCommands.getInverterMetrics()
+   * Initialize inverter profile - either auto-detect or load manually selected profile.
+   * JSON profiles are the master source of truth.
+   * Auto-detection searches available profiles by brand name.
    */
-  private combineU32(highWord: number, lowWord: number): number {
-    return (highWord << 16) | lowWord;
+  private async initializeInverterProfile(): Promise<void> {
+    if (this.inverterProfileName === 'auto') {
+      this.log.info('🔍 Auto-detecting inverter profile from available JSON profiles...');
+      
+      // Get all available profiles from JSON files
+      const availableProfiles = InverterProfileFactory.listAvailable();
+      this.log.debug(`📋 Available profiles: ${availableProfiles.join(', ')}`);
+
+      // Try to find a profile matching the configured brand
+      // Brand comes from config (e.g., "Growatt", "GoodWe", "SolaX", etc.)
+      let matchedProfileName: string | null = null;
+
+      for (const profileName of availableProfiles) {
+        const config = InverterProfileFactory.getProfileConfig(profileName);
+        if (config && config.manufacturer === this.brand) {
+          matchedProfileName = profileName;
+          this.log.info(
+            `✅ Found matching profile for brand "${this.brand}": ${profileName}`,
+          );
+          break;
+        }
+      }
+
+      if (!matchedProfileName) {
+        // No exact match - try first available profile from manufacturer
+        this.log.warn(
+          `⚠️ No exact profile match for brand "${this.brand}". Scanning for alternatives...`,
+        );
+
+        // List all manufacturers available
+        const manufacturers = InverterProfileFactory.getManufacturers();
+        this.log.info(`📦 Available manufacturers: ${manufacturers.join(', ')}`);
+
+        if (manufacturers.length > 0) {
+          // Default to first manufacturer's first profile
+          const defaultManufacturer = manufacturers[0];
+          const profilesForManufacturer = InverterProfileFactory.getProfilesByManufacturer(
+            defaultManufacturer,
+          );
+
+          if (profilesForManufacturer.length > 0) {
+            matchedProfileName = profilesForManufacturer[0].name;
+            this.log.warn(
+              `⚠️ Defaulting to: ${defaultManufacturer} - ${profilesForManufacturer[0].model}`,
+            );
+          }
+        }
+      }
+
+      if (matchedProfileName) {
+        const profile = InverterProfileFactory.createFromName(matchedProfileName, this.log);
+        this.activeProfile = profile || undefined;
+
+        if (this.activeProfile) {
+          this.log.info(
+            `✅ Loaded profile: ${this.activeProfile.config.manufacturer} ${this.activeProfile.config.model}`,
+          );
+        }
+      } else {
+        this.log.error('❌ No inverter profiles found in profiles/ directory');
+        throw new Error('No inverter profiles available. Check profiles/ folder.');
+      }
+    } else {
+      // Manual profile selection - let JSON be the source of truth
+      this.log.info(`📌 Loading manually selected profile: ${this.inverterProfileName}`);
+
+      const config = InverterProfileFactory.getProfileConfig(this.inverterProfileName);
+      if (!config) {
+        this.log.error(
+          `❌ Profile not found: ${this.inverterProfileName}. Check profiles/ directory.`,
+        );
+        this.log.info(
+          `📋 Available profiles: ${InverterProfileFactory.listAvailable().join(', ')}`,
+        );
+        throw new Error(`Profile not found: ${this.inverterProfileName}`);
+      }
+
+      const profile = InverterProfileFactory.createFromName(this.inverterProfileName, this.log);
+      this.activeProfile = profile || undefined;
+
+      if (this.activeProfile) {
+        this.log.info(
+          `✅ Loaded profile: ${this.activeProfile.config.manufacturer} ${this.activeProfile.config.model}`,
+        );
+      }
+    }
   }
 
   private async pollInverterData(): Promise<void> {
     try {
       this.log.debug('Polling inverter for data...');
 
-      // Fetch all live inverter telemetry from Growatt SPH
-      const metrics = await GrowattInverterCommands.getInverterMetrics(
+      // Fetch all live inverter telemetry using active profile
+      const metrics = await this.activeProfile?.readMetrics(
         this.modbusClient,
-        this.log,
       );
 
       if (!metrics) {
@@ -775,33 +896,31 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
       // Destructure metrics for easier use
       const {
-        solarKW,
-        batterySoc,
-        gridImportKW: packKW,
-        gridExportKW: exportKW,
-        localLoadKW: usageKW,
+        solarPower,
+        batterySoC,
+        importPower: packKW,
+        exportPower: exportKW,
+        loadPower: usageKW,
       } = metrics;
 
-      // Add metrics to buffer for later aggregation
+      // Add metrics to buffer for later aggregation (convert W to kW)
       this.dataBuffer.add({
-        solar: solarKW,
-        export: exportKW,
-        pack: packKW,
-        usage: usageKW,
+        solar: solarPower / 1000,
+        export: exportKW / 1000,
+        pack: packKW / 1000,
+        usage: usageKW / 1000,
       });
 
       // Read AC Charge settings to determine if buying from grid
-      const acChargeState = await GrowattInverterCommands.getChargingSettings(
+      const acChargeState = await this.activeProfile?.readChargeSettings(
         this.modbusClient,
-        this.log,
       );
       const isBuyingFromGrid = acChargeState?.enable ?? false;
 
       // Read Discharge settings to determine if sending to grid
       const dischargeState =
-        await GrowattInverterCommands.getDischargingSettings(
+        await this.activeProfile?.readDischargeSettings(
           this.modbusClient,
-          this.log,
         );
       const isSendingToGrid = dischargeState?.enable ?? false;
 
@@ -811,13 +930,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           ? 'SENDING'
           : 'IDLE';
       this.log.info(
-        `Inverter Data -> Solar: ${solarKW}kW | Export: ${exportKW}kW | ` +
-          `Import: ${packKW}kW | Load: ${usageKW}kW | Battery: ${batterySoc}% | Grid Mode: ${gridMode}`,
+        `Inverter Data -> Solar: ${(solarPower / 1000).toFixed(2)}kW | Export: ${(exportKW / 1000).toFixed(2)}kW | ` +
+          `Import: ${(packKW / 1000).toFixed(2)}kW | Load: ${(usageKW / 1000).toFixed(2)}kW | Battery: ${batterySoC}% | Grid Mode: ${gridMode}`,
       );
 
       // Update Apple Home UI Elements with current (live) values
-      // Convert kW to Watts for HomeKit Lux mapping (1 kW = 1000 W)
-      const currentWatts = Math.max(solarKW * 1000, 0.0001); // HomeKit Lux minimum is 0.0001
+      // solarPower is in Watts, HomeKit uses Lux (1 W = 1 Lux)
+      const currentWatts = Math.max(solarPower, 0.0001); // HomeKit Lux minimum is 0.0001
 
       if (this.lightSensorService) {
         // Lux value maps 1:1 to current Watts
@@ -831,13 +950,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         // Update BatteryLevel characteristic with the actual percentage
         this.batteryService.updateCharacteristic(
           this.api.hap.Characteristic.BatteryLevel,
-          batterySoc,
+          batterySoC,
         );
 
         // Update StatusLowBattery: only set to LOW if battery < 10%, otherwise NORMAL
         // This prevents the "Low battery voltage" warning from appearing unnecessarily
         const isLow =
-          batterySoc < 10
+          batterySoC < 10
             ? this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
             : this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
         this.batteryService.updateCharacteristic(
@@ -866,7 +985,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         // Display battery level as temperature value (0-100 maps to battery %)
         this.temperatureSensorService.updateCharacteristic(
           this.api.hap.Characteristic.CurrentTemperature,
-          batterySoc,
+          batterySoC,
         );
       }
     } catch (error: any) {

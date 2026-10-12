@@ -1,0 +1,38 @@
+{
+  "name": "GoodWe_ET",
+  "manufacturer": "GoodWe",
+  "model": "ET 3000-11000 (Hybrid)",
+  "phases": 3,
+  "hasBattery": true,
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 8899,
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 16000,
+    "loadPowerRegister": 16002,
+    "exportPowerRegister": 16003,
+    "importPowerRegister": 16004,
+    "batteryChargePowerRegister": 16006,
+    "batteryDischargePowerRegister": 16007,
+    "batterySocRegister": 16010,
+    "scalingFactor": 0.1
+  },
+  "control": {
+    "dischargeRateRegister": 17000,
+    "dischargeStopSocRegister": 17001,
+    "dischargeStartTimeRegister": 17002,
+    "dischargeStopTimeRegister": 17003,
+    "dischargeEnableRegister": 17004,
+    "chargeRateRegister": 17010,
+    "chargeStopSocRegister": 17011,
+    "chargeStartTimeRegister": 17012,
+    "chargeStopTimeRegister": 17013,
+    "chargeEnableRegister": 17014
+  },
+  "encoding": {
+    "timeFormat": "MinutesFromMidnight",
+    "endianness": "BigEndian"
+  }
+}

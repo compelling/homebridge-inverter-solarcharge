@@ -1,0 +1,39 @@
+{
+  "name": "SolarEdge_SE",
+  "manufacturer": "SolarEdge",
+  "model": "SE3K-SE10K (All models)",
+  "phases": 1,
+  "hasBattery": false,
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 1502,
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 40080,
+    "loadPowerRegister": 40121,
+    "exportPowerRegister": 40085,
+    "importPowerRegister": 40086,
+    "batteryChargePowerRegister": 0,
+    "batteryDischargePowerRegister": 0,
+    "batterySocRegister": 0,
+    "scalingFactor": 1
+  },
+  "control": {
+    "dischargeRateRegister": 0,
+    "dischargeStopSocRegister": 0,
+    "dischargeStartTimeRegister": 0,
+    "dischargeStopTimeRegister": 0,
+    "dischargeEnableRegister": 0,
+    "chargeRateRegister": 0,
+    "chargeStopSocRegister": 0,
+    "chargeStartTimeRegister": 0,
+    "chargeStopTimeRegister": 0,
+    "chargeEnableRegister": 0
+  },
+  "encoding": {
+    "timeFormat": "RawInteger",
+    "endianness": "BigEndian"
+  },
+  "note": "SolarEdge uses SunSpec Modbus (IEC 61850-90-7). Battery features may be available via additional modules. Check SunSpec register specifications."
+}

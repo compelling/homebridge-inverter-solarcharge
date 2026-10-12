@@ -1,0 +1,41 @@
+{
+  "name": "Growatt_SPH",
+  "manufacturer": "Growatt",
+  "model": "SPH 3000-6000 / SPH TL3",
+  "phases": 1,
+  "hasBattery": true,
+  "connectionType": "RTU",
+  "connection": {
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 1009,
+    "loadPowerRegister": 1012,
+    "exportPowerRegister": 1010,
+    "importPowerRegister": 1011,
+    "batteryChargePowerRegister": 1013,
+    "batteryDischargePowerRegister": 1014,
+    "batterySocRegister": 1019,
+    "scalingFactor": 1
+  },
+  "control": {
+    "dischargeRateRegister": 1070,
+    "dischargeStopSocRegister": 1071,
+    "dischargeStartTimeRegister": 1080,
+    "dischargeStopTimeRegister": 1081,
+    "dischargeEnableRegister": 1082,
+    "chargeRateRegister": 1068,
+    "chargeStopSocRegister": 1069,
+    "chargeStartTimeRegister": 1075,
+    "chargeStopTimeRegister": 1076,
+    "chargeEnableRegister": 1077
+  },
+  "encoding": {
+    "timeFormat": "PackedBytes",
+    "endianness": "BigEndian"
+  }
+}

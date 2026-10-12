@@ -1,0 +1,39 @@
+{
+  "name": "Fronius_Primo",
+  "manufacturer": "Fronius",
+  "model": "Primo / Symo / Gen24",
+  "phases": 1,
+  "hasBattery": false,
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 502,
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 40083,
+    "loadPowerRegister": 0,
+    "exportPowerRegister": 40088,
+    "importPowerRegister": 40089,
+    "batteryChargePowerRegister": 0,
+    "batteryDischargePowerRegister": 0,
+    "batterySocRegister": 0,
+    "scalingFactor": 1
+  },
+  "control": {
+    "dischargeRateRegister": 0,
+    "dischargeStopSocRegister": 0,
+    "dischargeStartTimeRegister": 0,
+    "dischargeStopTimeRegister": 0,
+    "dischargeEnableRegister": 0,
+    "chargeRateRegister": 0,
+    "chargeStopSocRegister": 0,
+    "chargeStartTimeRegister": 0,
+    "chargeStopTimeRegister": 0,
+    "chargeEnableRegister": 0
+  },
+  "encoding": {
+    "timeFormat": "RawInteger",
+    "endianness": "BigEndian"
+  },
+  "note": "Fronius uses SunSpec Modbus (IEC 61850-90-7) on TCP port 502. Battery support varies by model and storage module."
+}

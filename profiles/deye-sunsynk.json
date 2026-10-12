@@ -1,0 +1,41 @@
+{
+  "name": "Deye_Sunsynk",
+  "manufacturer": "Deye / Sunsynk / Solark",
+  "model": "SG3-6K / SG5-10K / Sunsynk 5K-15K",
+  "phases": 1,
+  "hasBattery": true,
+  "connectionType": "RTU",
+  "connection": {
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 259,
+    "loadPowerRegister": 262,
+    "exportPowerRegister": 263,
+    "importPowerRegister": 264,
+    "batteryChargePowerRegister": 269,
+    "batteryDischargePowerRegister": 270,
+    "batterySocRegister": 271,
+    "scalingFactor": 1
+  },
+  "control": {
+    "dischargeRateRegister": 168,
+    "dischargeStopSocRegister": 170,
+    "dischargeStartTimeRegister": 171,
+    "dischargeStopTimeRegister": 172,
+    "dischargeEnableRegister": 173,
+    "chargeRateRegister": 165,
+    "chargeStopSocRegister": 167,
+    "chargeStartTimeRegister": 174,
+    "chargeStopTimeRegister": 175,
+    "chargeEnableRegister": 176
+  },
+  "encoding": {
+    "timeFormat": "MinutesFromMidnight",
+    "endianness": "BigEndian"
+  }
+}

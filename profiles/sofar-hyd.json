@@ -1,0 +1,41 @@
+{
+  "name": "Sofar_HYD",
+  "manufacturer": "Sofar Solar",
+  "model": "HYD-3K / HYD-6K / HYD-10K",
+  "phases": 1,
+  "hasBattery": true,
+  "connectionType": "RTU",
+  "connection": {
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "modbusSlaveId": 1
+  },
+  "telemetry": {
+    "solarPowerRegister": 3020,
+    "loadPowerRegister": 3025,
+    "exportPowerRegister": 3026,
+    "importPowerRegister": 3027,
+    "batteryChargePowerRegister": 3030,
+    "batteryDischargePowerRegister": 3031,
+    "batterySocRegister": 3035,
+    "scalingFactor": 0.01
+  },
+  "control": {
+    "dischargeRateRegister": 3105,
+    "dischargeStopSocRegister": 3106,
+    "dischargeStartTimeRegister": 3107,
+    "dischargeStopTimeRegister": 3108,
+    "dischargeEnableRegister": 3109,
+    "chargeRateRegister": 3100,
+    "chargeStopSocRegister": 3101,
+    "chargeStartTimeRegister": 3102,
+    "chargeStopTimeRegister": 3103,
+    "chargeEnableRegister": 3104
+  },
+  "encoding": {
+    "timeFormat": "PackedBytes",
+    "endianness": "BigEndian"
+  }
+}

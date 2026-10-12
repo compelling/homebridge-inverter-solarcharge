@@ -5,16 +5,23 @@
     "type": "object",
     "properties": {
       "name": {
-        "title": "Name",
+        "title": "Inverter Display Name",
         "type": "string",
-        "default": "Growatt SPH Inverter",
-        "required": true
+        "default": "Solar Inverter",
+        "required": true,
+        "description": "The name that will be displayed in your Apple Home App and Homebridge logs"
       },
       "serialPort": {
-        "title": "Serial Port Path",
+        "title": "Serial Port Path (For USB/RS485 Connection)",
         "type": "string",
         "default": "/dev/ttyUSB0",
-        "required": true
+        "description": "Leave unchanged if using a USB cable directly plugged into your Raspberry Pi."
+      },
+      "ipAddress": {
+        "title": "Inverter IP Address (For Wi-Fi/LAN Connection)",
+        "type": "string",
+        "placeholder": "e.g., 192.168.1.50",
+        "description": "ONLY fill this out if your inverter connects over your local network. Leave blank if using a USB cable."
       },
       "uploadInterval": {
         "title": "Data Upload Interval (seconds)",
@@ -36,14 +43,30 @@
         "description": "Enter your SolarCharge serial number for uploading data",
         "required": true
       },
-      "inverter": {
-        "title": "Inverter Model",
+      "inverterProfile": {
+        "title": "Inverter Profile (Manufacturer Detection)",
         "type": "string",
-        "enum": ["Growatt SPH3600"],
-        "default": "Growatt SPH3600",
-        "description": "Select your inverter brand and model (e.g., 'Growatt SPH3600')",
-        "required": true
+        "enum": [
+          "auto",
+          "Growatt_SPH",
+          "GoodWe_ET",
+          "SolaX_Hybrid",
+          "SolarEdge_SE",
+          "Fronius_Primo",
+          "Deye_Sunsynk",
+          "Sofar_HYD"
+        ],
+        "default": "auto",
+        "description": "Set to 'auto' to detect your inverter automatically during startup. Or manually select your brand/model to skip detection."
+      },
+      "logLevel": {
+        "title": "Log Level",
+        "type": "string",
+        "enum": ["debug", "info", "warn", "error"],
+        "default": "info",
+        "description": "Control verbosity of plugin logs. Use 'debug' to troubleshoot auto-detection issues."
       }
-    }
+    },
+    "required": ["name", "plantId", "serialNum"]
   }
 }
