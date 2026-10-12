@@ -9,6 +9,8 @@ import type {
 import ModbusRTU from 'modbus-serial';
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
+import { GrowattInverterCommands } from './growatt-inverter.js';
+import { SolarChargeUploader } from './solarcharge.js';
 
 // Define a local interface for the Modbus client methods we use.
 // This bypasses the legacy CommonJS namespace mapping bugs in strict TypeScript environments.
@@ -95,6 +97,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private pollingTimer?: NodeJS.Timeout;
   private uploadTimer?: NodeJS.Timeout;
   private dataBuffer!: DataBuffer;
+  private solarChargeUploader!: SolarChargeUploader;
   private accessories: PlatformAccessory[] = []; // Track all cached and created accessories
   private inverterAccessory?: PlatformAccessory;
   private batteryLevelAccessory?: PlatformAccessory;
@@ -132,6 +135,11 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     // Upload aggregation interval: configurable, default 300s (5 minutes)
     this.uploadInterval = Math.max(config.uploadInterval || 300, 60) * 1000;
     this.dataBuffer = new DataBuffer();
+    this.solarChargeUploader = new SolarChargeUploader(
+      this.plantId,
+      this.serialNum,
+      this.log,
+    );
 
     this.api.on('didFinishLaunching', () => {
       this.connectAndStartPolling();
@@ -234,7 +242,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       if (tempSensor) {
         // Get all characteristics to check the Name
         const nameChars = tempSensor.characteristics.filter(
-          c => c.UUID === this.api.hap.Characteristic.Name.UUID
+          c => c.UUID === this.api.hap.Characteristic.Name.UUID,
         );
         for (const nameChar of nameChars) {
           if (nameChar.value === 'Battery %' || String(nameChar.value).includes('Battery %')) {
@@ -322,6 +330,56 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.switchService
         .setCharacteristic(this.api.hap.Characteristic.Name, 'Inverter Connected')
         .setCharacteristic(this.api.hap.Characteristic.On, true);
+
+      // Handle toggle changes for AC charge/buy mode
+      this.switchService
+        .getCharacteristic(this.api.hap.Characteristic.On)
+        .onSet(async (value: unknown) => {
+          const shouldEnable = value as boolean;
+          const startHour = 2; // Standard night charging start (02:00)
+          const stopHour = 6; // Standard night charging end (06:00)
+
+          const success = await GrowattInverterCommands.setChargingSettings(
+            this.modbusClient,
+            shouldEnable,
+            startHour,
+            stopHour,
+            this.log,
+          );
+
+          if (success) {
+            const sellState = await GrowattInverterCommands.getDischargingSettings(
+              this.modbusClient,
+              this.log,
+            );
+            const buyState = await GrowattInverterCommands.getChargingSettings(
+              this.modbusClient,
+              this.log,
+            );
+
+            if (sellState && buyState) {
+              // If toggle is off, send 0,0 for buy times; otherwise send standard times
+              await this.uploadInverterSettings({
+                sellFrom: sellState.enable ? sellState.fromHour : 0,
+                sellTo: sellState.enable ? sellState.toHour : 0,
+
+                buyFrom: shouldEnable ? startHour : 0,
+                buyTo: shouldEnable ? stopHour : 0,
+              });
+            }
+          } else {
+            // Revert the toggle on failure
+            setTimeout(() => {
+              this.switchService?.updateCharacteristic(
+                this.api.hap.Characteristic.On,
+                !shouldEnable,
+              );
+            }, 1000);
+            throw new this.api.hap.HapStatusError(
+              this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+            );
+          }
+        });
     }
 
     // Get the Battery service (displays battery SoC as secondary service)
@@ -392,6 +450,52 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.batterySwitchService
         .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Status')
         .setCharacteristic(this.api.hap.Characteristic.On, true); // On = battery healthy
+
+      // Handle toggle changes for discharge/sell mode
+      this.batterySwitchService
+        .getCharacteristic(this.api.hap.Characteristic.On)
+        .onSet(async (value: unknown) => {
+          const shouldEnable = value as boolean;
+
+          const success = await GrowattInverterCommands.setDischargingSettings(
+            this.modbusClient,
+            shouldEnable,
+            this.log,
+          );
+
+          if (success) {
+            const sellState = await GrowattInverterCommands.getDischargingSettings(
+              this.modbusClient,
+              this.log,
+            );
+            const buyState = await GrowattInverterCommands.getChargingSettings(
+              this.modbusClient,
+              this.log,
+            );
+
+            if (sellState && buyState) {
+              // If toggle is off, send 0,0 for sell times; otherwise send actual times
+              await this.uploadInverterSettings({
+                sellFrom: shouldEnable ? sellState.fromHour : 0,
+                sellTo: shouldEnable ? sellState.toHour : 0,
+
+                buyFrom: buyState.enable ? buyState.fromHour : 0,
+                buyTo: buyState.enable ? buyState.toHour : 0,
+              });
+            }
+          } else {
+            // Revert the toggle on failure
+            setTimeout(() => {
+              this.batterySwitchService?.updateCharacteristic(
+                this.api.hap.Characteristic.On,
+                !shouldEnable,
+              );
+            }, 1000);
+            throw new this.api.hap.HapStatusError(
+              this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+            );
+          }
+        });
     }
 
     // CRITICAL: Ensure TemperatureSensor exists with CORRECT "Battery Level" name
@@ -440,7 +544,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       });
       
       const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('Modbus connection timeout after 10 seconds')), 10000)
+        setTimeout(() => reject(new Error('Modbus connection timeout after 10 seconds')), 10000),
       );
       
       await Promise.race([connectionPromise, timeoutPromise]);
@@ -477,20 +581,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   }
 
   /**
-   * Helper function to convert raw Growatt Modbus register value to kWatt (kW).
-   * Growatt SPH handles values with a 0.1 multiplier for Watts. Dividing by 1000 converts to kW.
-   * For u32 values spanning 2 registers: combine high word (first register) and low word (second).
-   * Total conversion factor: (value * 0.1) / 1000 = value / 10000
-   */
-  private convertRegisterToKW(rawValue: number): number {
-    const kW = rawValue / 10000;
-    // Round to 3 decimal places (nearest Watt equivalent in kW, e.g., 1.234 kW)
-    return parseFloat(kW.toFixed(3));
-  }
-
-  /**
    * Combine two 16-bit register values into a single 32-bit value (u32).
    * Modbus u32 values span 2 consecutive registers: high word first, then low word.
+   * @deprecated Moved to GrowattInverterCommands.getInverterMetrics()
    */
   private combineU32(highWord: number, lowWord: number): number {
     return (highWord << 16) | lowWord;
@@ -500,38 +593,25 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     try {
       this.log.debug('Polling inverter for data...');
 
-      // Read specific register blocks from configured inverter
-      // Register 1-2: PV Power (u32) - addresses 1-2
-      const pvResult = await this.modbusClient.readInputRegisters(1, 2);
-      const pvRaw = pvResult?.data
-        ? this.combineU32(pvResult.data[0] || 0, pvResult.data[1] || 0)
-        : 0;
-      const solarKW = this.convertRegisterToKW(pvRaw);
+      // Fetch all live inverter telemetry from Growatt SPH
+      const metrics = await GrowattInverterCommands.getInverterMetrics(
+        this.modbusClient,
+        this.log,
+      );
 
-      // Register 1014: Battery SoC (u16)
-      const batteryResult = await this.modbusClient.readInputRegisters(1014, 1);
-      const batterySoc = Math.min(Math.max(batteryResult?.data?.[0] || 0, 0), 100);
+      if (!metrics) {
+        this.log.error('Failed to read inverter metrics');
+        return;
+      }
 
-      // Register 1021-1022: Grid Import Power (u32)
-      const importResult = await this.modbusClient.readInputRegisters(1021, 2);
-      const importRaw = importResult?.data
-        ? this.combineU32(importResult.data[0] || 0, importResult.data[1] || 0)
-        : 0;
-      const packKW = this.convertRegisterToKW(importRaw);
-
-      // Register 1029-1030: Grid Export Power (u32)
-      const exportResult = await this.modbusClient.readInputRegisters(1029, 2);
-      const exportRaw = exportResult?.data
-        ? this.combineU32(exportResult.data[0] || 0, exportResult.data[1] || 0)
-        : 0;
-      const exportKW = this.convertRegisterToKW(exportRaw);
-
-      // Register 1037-1038: Local Load Power (u32)
-      const loadResult = await this.modbusClient.readInputRegisters(1037, 2);
-      const loadRaw = loadResult?.data
-        ? this.combineU32(loadResult.data[0] || 0, loadResult.data[1] || 0)
-        : 0;
-      const usageKW = this.convertRegisterToKW(loadRaw);
+      // Destructure metrics for easier use
+      const {
+        solarKW,
+        batterySoc,
+        gridImportKW: packKW,
+        gridExportKW: exportKW,
+        localLoadKW: usageKW,
+      } = metrics;
 
       // Add metrics to buffer for later aggregation
       this.dataBuffer.add({
@@ -541,12 +621,29 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         usage: usageKW,
       });
 
+      // Read AC Charge settings to determine if buying from grid
+      const acChargeState = await GrowattInverterCommands.getChargingSettings(
+        this.modbusClient,
+        this.log,
+      );
+      const isBuyingFromGrid = acChargeState?.enable ?? false;
+
+      // Read Discharge settings to determine if sending to grid
+      const dischargeState = await GrowattInverterCommands.getDischargingSettings(
+        this.modbusClient,
+        this.log,
+      );
+      const isSendingToGrid = dischargeState?.enable ?? false;
+
+      const gridMode = isBuyingFromGrid ? 'BUYING' : isSendingToGrid ? 'SENDING' : 'IDLE';
       this.log.info(
-        `Inverter Data -> Solar: ${solarKW}kW | Export: ${exportKW}kW | Import: ${packKW}kW | Load: ${usageKW}kW | Battery: ${batterySoc}%`,
+        `Inverter Data -> Solar: ${solarKW}kW | Export: ${exportKW}kW | ` +
+        `Import: ${packKW}kW | Load: ${usageKW}kW | Battery: ${batterySoc}% | Grid Mode: ${gridMode}`,
       );
 
       // Update Apple Home UI Elements with current (live) values
-      const currentWatts = Math.max(pvRaw * 0.1, 0.0001); // HomeKit Lux minimum is 0.0001
+      // Convert kW to Watts for HomeKit Lux mapping (1 kW = 1000 W)
+      const currentWatts = Math.max(solarKW * 1000, 0.0001); // HomeKit Lux minimum is 0.0001
 
       if (this.lightSensorService) {
         // Lux value maps 1:1 to current Watts
@@ -576,18 +673,18 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       }
 
       if (this.switchService) {
-        // Keep the switch always "On" to show inverter is running
+        // ACCESSORY 1: Switch ON if buying power from grid (AC charging enabled)
         this.switchService.updateCharacteristic(
           this.api.hap.Characteristic.On,
-          true,
+          isBuyingFromGrid,
         );
       }
 
       if (this.batterySwitchService) {
-        // Update battery switch: on if healthy (>=10%), off if low
+        // ACCESSORY 2: Switch ON if sending power to grid (discharge/grid-first enabled)
         this.batterySwitchService.updateCharacteristic(
           this.api.hap.Characteristic.On,
-          batterySoc >= 10, // On when battery is healthy
+          isSendingToGrid,
         );
       }
 
@@ -628,66 +725,28 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       const startHHMM = uploadStart.toTimeString().slice(0, 5); // "HH:MM"
       const endHHMM = now.toTimeString().slice(0, 5); // "HH:MM"
 
-      await this.uploadToSolarCharge(
-        avgMetrics.solar,
-        avgMetrics.export,
-        avgMetrics.pack,
-        avgMetrics.usage,
+      await this.solarChargeUploader.uploadMetrics(
+        avgMetrics,
         startHHMM,
         endHHMM,
       );
 
       // Clear buffer after successful upload
       this.dataBuffer.clear();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       this.log.error(
-        `Error during aggregated upload: ${error.message}`,
+        `Error during aggregated upload: ${errorMsg}`,
       );
     }
   }
 
-  private async uploadToSolarCharge(
-    solarKW: number,
-    exportKW: number,
-    packKW: number,
-    usageKW: number,
-    startTime: string,
-    endTime: string,
-  ): Promise<void> {
-    try {
-      const response = await fetch(
-        'https://groshapp.com/test/inverterdata', // test server
-        // 'https://gr1.compellingsoftware.com/edge/inverterdata', // production server
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            plantId: this.plantId,
-            serialNum: this.serialNum,
-            branding: 'sc',
-            start: startTime, // e.g., "14:05"
-            end: endTime, // e.g., "14:10"
-            solar: solarKW, // Averaged kW (ppv - produced solar power)
-            usage: usageKW, // Averaged kW (local load consumption)
-            export: exportKW, // Averaged kW (export to grid)
-            pack: packKW, // Averaged kW (grid import / battery charge)
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        this.log.error(
-          `SolarCharge API error: ${response.status} ${response.statusText}`,
-        );
-      } else {
-        this.log.debug('Successfully uploaded aggregated data to SolarCharge API');
-      }
-    } catch (error: any) {
-      this.log.error(
-        `Could not upload data to SolarCharge API: ${error.message}`,
-      );
-    }
+  private async uploadInverterSettings(settings: {
+    sellFrom: number;
+    sellTo: number;
+    buyFrom: number;
+    buyTo: number;
+  }): Promise<void> {
+    await this.solarChargeUploader.uploadInverterSettings(settings);
   }
 }
