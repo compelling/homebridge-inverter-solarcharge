@@ -108,7 +108,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
   // HomeKit Services
   private lightSensorService?: Service;
-  private switchService?: Service;
+  private solarSwitchService?: Service;
   private temperatureSensorService?: Service;
   private batterySwitchService?: Service;
 
@@ -194,63 +194,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    // CRITICAL: Detect and REPAIR cached "Solar Battery" accessory
-    // Old version has TemperatureSensor with "Battery %" name → causes HAP-NodeJS validation loop + CPU spike
-    if (accessory.displayName === 'Solar Battery') {
-      const expectedUuid = this.api.hap.uuid.generate(
-        `${this.brand}-${this.inverterType}-battery-level`,
-      );
-
-      // First: Check if TemperatureSensor has the old "Battery %" name and REMOVE it
-      const tempSensor = accessory.getService(
-        this.api.hap.Service.TemperatureSensor,
-      );
-      if (tempSensor) {
-        const nameChar = tempSensor.getCharacteristic(
-          this.api.hap.Characteristic.Name,
-        );
-        if (
-          nameChar &&
-          (nameChar.value === 'Battery %' ||
-            String(nameChar.value).includes('Battery %'))
-        ) {
-          this.log.error(
-            '🚨 CRITICAL: Found cached TemperatureSensor with INVALID "Battery %" name!',
-          );
-          this.log.error(
-            '   This causes HAP-NodeJS validation loop and 90% CPU spike.',
-          );
-          this.log.error(
-            '   Removing the broken service and will recreate with "Battery Level" name...',
-          );
-          // Remove the broken service
-          accessory.removeService(tempSensor);
-        }
-      }
-
-      // Second: If this is our expected UUID, keep the accessory and let discoverDevices() fix it
-      if (accessory.UUID === expectedUuid) {
-        this.log.info(
-          '✓ Solar Battery accessory UUID is correct. Services will be repaired in discoverDevices()...',
-        );
-      } else {
-        // UUID doesn't match our current config - it's from old hardcoded Growatt-SPH version
-        this.log.error(
-          '🚨 CRITICAL: Solar Battery has OLD hardcoded Growatt-SPH UUID!',
-        );
-        this.log.error(
-          `   UUID: ${accessory.UUID} | Expected: ${expectedUuid}`,
-        );
-        this.log.error(
-          '   Unregistering and will recreate with dynamic UUID...',
-        );
-        this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
-          accessory,
-        ]);
-        return; // Don't cache the old UUID version
-      }
-    }
-
     this.accessories.push(accessory);
 
     if (accessory.UUID === inverterUuid) {
@@ -264,13 +207,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   //
   // 📱 HOMEBRIDGE INVERTER SOLARCHARGE PLUGIN
   // ├─ 🔌 ACCESSORY 1: "Solar Inverter"
-  // │  ├─ 💡 LightSensor → "Inverter Production" (Lux on Home screen)
   // │  ├─ 🔘 Switch → "Inverter Connected" (toggle on Home screen, ON means buy power from grid)
-  // │  └─ 🔋 Battery → "Inverter Battery" (secondary - details only)
+  // │  └─ 💡 LightSensor → "Inverter Production" (Lux on Home screen equals Kilowatts)
   // │
   // └─ 🔌 ACCESSORY 2: "Solar Battery"
   //    ├─ 🔘 Switch → "Battery Status" (big tile on Home screen, ON means sell battery power to grid)
-  //    └─ 🌡️ TemperatureSensor → "Battery Level" (secondary - shows % in details)
+  //    └─ 🌡️ TemperatureSensor → "Battery Level" (Degrees on Home screen equals %)
 
   private discoverDevices(): void {
     const inverterUuid = this.api.hap.uuid.generate(
@@ -279,62 +221,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     const batteryLevelUuid = this.api.hap.uuid.generate(
       `${this.brand}-${this.inverterType}-battery-level`,
     );
-
-    // ⚡ CRITICAL FIX: Detect and remove any cached accessories with invalid service names
-    // This prevents HAP-NodeJS validation errors and CPU spikes from "Battery %" characteristic
-    const accessoriesToRemove: PlatformAccessory[] = [];
-    for (const accessory of this.accessories) {
-      // Check for old Battery TemperatureSensor with invalid "Battery %" name
-      const tempSensor = accessory.getService(
-        this.api.hap.Service.TemperatureSensor,
-      );
-      if (tempSensor) {
-        // Get all characteristics to check the Name
-        const nameChars = tempSensor.characteristics.filter(
-          (c) => c.UUID === this.api.hap.Characteristic.Name.UUID,
-        );
-        for (const nameChar of nameChars) {
-          if (
-            nameChar.value === 'Battery %' ||
-            String(nameChar.value).includes('Battery %')
-          ) {
-            this.log.warn(
-              '🚨 CRITICAL FIX: Found cached accessory with INVALID "Battery %" name!',
-            );
-            this.log.warn(
-              `   Accessory: ${accessory.displayName} | Service: ${tempSensor.displayName}`,
-            );
-            this.log.warn(
-              '   This causes HAP-NodeJS validation errors and 90% CPU spike.',
-            );
-            this.log.warn(
-              '   ➤ Unregistering and will recreate with valid "Battery Level" name...',
-            );
-            accessoriesToRemove.push(accessory);
-            break;
-          }
-        }
-      }
-    }
-
-    // Remove all broken accessories
-    if (accessoriesToRemove.length > 0) {
-      this.api.unregisterPlatformAccessories(
-        PLUGIN_NAME,
-        PLATFORM_NAME,
-        accessoriesToRemove,
-      );
-      // Remove from our tracking array too
-      for (const broken of accessoriesToRemove) {
-        const idx = this.accessories.indexOf(broken);
-        if (idx >= 0) {
-          this.accessories.splice(idx, 1);
-        }
-      }
-      this.log.warn(
-        `✅ Removed ${accessoriesToRemove.length} broken accessory(ies). Recreating now...`,
-      );
-    }
 
     // --- INVERTER ACCESSORY 1 (LightSensor + Switch + Battery) ---
     let inverterAccessory = this.accessories.find(
@@ -396,12 +282,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     }
 
     // Get the Switch service (virtual control button for Home app tile)
-    this.switchService =
+    this.solarSwitchService =
       this.inverterAccessory.getService(this.api.hap.Service.Switch) ||
       this.inverterAccessory.addService(this.api.hap.Service.Switch);
 
-    if (this.switchService) {
-      this.switchService
+    if (this.solarSwitchService) {
+      this.solarSwitchService
         .setCharacteristic(
           this.api.hap.Characteristic.Name,
           'Inverter Connected',
@@ -409,7 +295,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         .setCharacteristic(this.api.hap.Characteristic.On, true);
 
       // Handle toggle changes for AC charge/buy mode
-      this.switchService
+      this.solarSwitchService
         .getCharacteristic(this.api.hap.Characteristic.On)
         .onSet(async (value: unknown) => {
           const shouldEnable = value as boolean; // what user toggled to (true=ON, false=OFF)
@@ -473,7 +359,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           } else {
             // Revert the toggle on failure
             setTimeout(() => {
-              this.switchService?.updateCharacteristic(
+              this.solarSwitchService?.updateCharacteristic(
                 this.api.hap.Characteristic.On,
                 !shouldEnable,
               );
@@ -486,7 +372,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           // If we auto-toggled OFF due to disabled app settings, update the UI
           if (shouldEnable && !shouldBuy) {
             setTimeout(() => {
-              this.switchService?.updateCharacteristic(
+              this.solarSwitchService?.updateCharacteristic(
                 this.api.hap.Characteristic.On,
                 false,
               );
@@ -494,8 +380,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           }
         });
     }
-
-
 
     // --- SOLAR BATTERY ACCESSORY 2 (Switch as primary + TemperatureSensor as secondary) ---
     let batteryLevelAccessory = this.accessories.find(
@@ -635,48 +519,21 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         });
     }
 
-    // CRITICAL: Ensure TemperatureSensor exists with CORRECT "Battery Level" name
-    // Remove any old "Battery %" characteristic first, then create fresh sensor
-    let tempSensorService = batteryLevelAccessory.getService(
+    // Get or CREATE temperature sensor service
+    this.temperatureSensorService = batteryLevelAccessory.getService(
       this.api.hap.Service.TemperatureSensor,
     );
-    if (tempSensorService) {
-      // Check if it still has the old "Battery %" name
-      const nameChar = tempSensorService.getCharacteristic(
-        this.api.hap.Characteristic.Name,
-      );
-      if (
-        nameChar &&
-        (nameChar.value === 'Battery %' ||
-          String(nameChar.value).includes('Battery %'))
-      ) {
-        this.log.error(
-          '🚨 CRITICAL: Cached TemperatureSensor still has invalid "Battery %" name!',
-        );
-        this.log.error(
-          '   Removing and recreating with valid "Battery Level" name...',
-        );
-        batteryLevelAccessory.removeService(tempSensorService);
-        tempSensorService = undefined;
-      }
-    }
-
-    // If TemperatureSensor doesn't exist (was removed or never created), create it now
-    if (!tempSensorService) {
-      this.log.info(
-        'Creating fresh TemperatureSensor service for battery level display...',
-      );
-      tempSensorService = batteryLevelAccessory.addService(
+    if (!this.temperatureSensorService) {
+      this.temperatureSensorService = batteryLevelAccessory.addService(
         this.api.hap.Service.TemperatureSensor,
         'Battery Level',
       );
     }
 
-    this.temperatureSensorService = tempSensorService;
     if (this.temperatureSensorService) {
       this.temperatureSensorService
         .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Level')
-        .setCharacteristic(this.api.hap.Characteristic.CurrentTemperature, 50); // Initial default (0-100 maps to battery %)
+        .setCharacteristic(this.api.hap.Characteristic.CurrentTemperature, 50);
     }
   }
 
@@ -930,9 +787,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
 
 
-      if (this.switchService) {
+      if (this.solarSwitchService) {
         // ACCESSORY 1: Switch ON if buying power from grid (AC charging enabled)
-        this.switchService.updateCharacteristic(
+        this.solarSwitchService.updateCharacteristic(
           this.api.hap.Characteristic.On,
           isBuyingFromGrid,
         );
