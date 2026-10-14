@@ -108,7 +108,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
   // HomeKit Services
   private lightSensorService?: Service;
-  private batteryService?: Service;
   private switchService?: Service;
   private temperatureSensorService?: Service;
   private batterySwitchService?: Service;
@@ -370,10 +369,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         this.api.hap.Service.Switch,
         'Inverter Connected',
       );
-      inverterAccessory.addService(
-        this.api.hap.Service.Battery,
-        'Inverter Battery',
-      );
 
       this.accessories.push(inverterAccessory);
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
@@ -500,20 +495,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         });
     }
 
-    // Get the Battery service (displays battery SoC as secondary service)
-    this.batteryService =
-      this.inverterAccessory.getService(this.api.hap.Service.Battery) ||
-      this.inverterAccessory.addService(this.api.hap.Service.Battery);
 
-    if (this.batteryService) {
-      this.batteryService
-        .setCharacteristic(this.api.hap.Characteristic.Name, 'Inverter Battery')
-        .setCharacteristic(this.api.hap.Characteristic.BatteryLevel, 50) // Initial default
-        .setCharacteristic(
-          this.api.hap.Characteristic.StatusLowBattery,
-          this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
-        );
-    }
 
     // --- SOLAR BATTERY ACCESSORY 2 (Switch as primary + TemperatureSensor as secondary) ---
     let batteryLevelAccessory = this.accessories.find(
@@ -946,24 +928,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         );
       }
 
-      if (this.batteryService) {
-        // Update BatteryLevel characteristic with the actual percentage
-        this.batteryService.updateCharacteristic(
-          this.api.hap.Characteristic.BatteryLevel,
-          batterySoC,
-        );
 
-        // Update StatusLowBattery: only set to LOW if battery < 10%, otherwise NORMAL
-        // This prevents the "Low battery voltage" warning from appearing unnecessarily
-        const isLow =
-          batterySoC < 10
-            ? this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
-            : this.api.hap.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
-        this.batteryService.updateCharacteristic(
-          this.api.hap.Characteristic.StatusLowBattery,
-          isLow,
-        );
-      }
 
       if (this.switchService) {
         // ACCESSORY 1: Switch ON if buying power from grid (AC charging enabled)

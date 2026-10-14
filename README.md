@@ -11,8 +11,9 @@ A dynamic platform plugin for Homebridge that integrates solar inverters / home 
 ## Features
 
 - **🔄 Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar
-- **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen 
-  - Solar Inverter (solar power, battery %, grid flow)
+- **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen (see separate section)
+  - 💡 Solar Inverter tile using a light sensor to display Solar Production (tap to display switch to toggle on purchase of power from grid) 
+  - 🌡️ Solar Battery tile using a temperature sensor to display Battery Level (tap to display switch to toggle on sale of power to grid) 
 - **🔌 Dual Accessories**: Separate controls for charging (buy) and discharging (sell)
 - **☁️ Cloud Sync**: Fetch buy/sell times from SolarCharge API
 - **⚡ Zero-Recompilation Extensibility**: Add new inverter brands via JSON profiles
@@ -48,6 +49,34 @@ Add to your Homebridge `config.json`:
 - `plantId`, `serialNum`: SolarCharge API credentials for syncing buy/sell times and uploading metrics
 - `brand`: Inverter manufacturer name (used for auto-detection)
 - `baseUrl`: SolarCharge API endpoint (default: `https://groshapp.com/test`)
+
+## HomeKit Integration
+
+The plugin creates two sophisticated accessories with hierarchical HomeKit UI:
+
+### Accessory 1: Solar Inverter
+
+- **Primary Service**: LightSensor ("Inverter Production")
+  - Displays current solar production as Lux value (1W = 1 Lux)
+  - Real-time updates every 5 seconds
+
+- **Control Switch**: "Inverter Connected"
+  - Toggle ON to enable grid charging (buy mode)
+  - When ON, fetches user-defined buy times from SolarCharge app
+  - Auto-toggles OFF if app has buy times disabled (00:00-00:00)
+  - Updates inverter settings via Modbus register write
+
+### Accessory 2: Solar Battery
+
+- **Primary Service**: Switch ("Battery Status")
+  - Toggle ON to enable grid discharging (sell mode)
+  - When ON, fetches user-defined sell times from SolarCharge app
+  - Auto-toggles OFF if app has sell times disabled (00:00-00:00)
+  - Updates inverter settings via Modbus register write
+  - Creates large tile on Home app for easy access
+
+- **Secondary Service**: TemperatureSensor ("Battery Level")
+  - Displays battery percentage as temperature value (0°–100°C = 0%–100% SoC)
 
 ## Architecture: JSON-Based Profile System
 
@@ -223,19 +252,6 @@ Requires serial device: `/dev/ttyUSB0` (Linux), `COM3` (Windows), `/dev/ttyUSB0`
 
 Uses network address from `config.json` `port` field (e.g., `192.168.1.100:502`)
 
-## HomeKit Accessories
-
-The plugin creates two accessories:
-
-1. **Inverter** (Accessory 1)
-   - Switch: Toggle battery charging (buy-from-grid mode)
-   - Light Sensor: Real-time solar power (as Lux)
-   - Battery Service: Battery % level
-
-2. **Battery** (Accessory 2)
-   - Switch: Toggle battery discharging (sell-to-grid mode)
-   - Temperature Sensor: Battery % as temperature display
-
 ## Troubleshooting
 
 **Profile Not Detected:**
@@ -288,19 +304,22 @@ profiles/                  # JSON inverter profiles (master source)
   sofar-hyd.json
 ```
 
-## Supported Inverters
+## Supported Inverters and Documentation Links
 
-| Brand | Model | Phases | Battery | Connection |
-|-------|-------|--------|---------|------------|
-| Growatt | SPH 5000-6000 / TL3 | 1-3 | Yes | RTU |
-| GoodWe | ET | 1-3 | Yes | TCP |
-| SolaX | Hybrid | 1-3 | Yes | RTU |
-| SolarEdge | SE5000 | 1 | No | TCP |
-| Fronius | Primo 6.0 | 1 | No | TCP |
-| Deye/Sunsynk | SUN-10K-G3 | 1 | Yes | RTU |
-| Sofar | HYD-EP | 1-3 | Yes | RTU |
+<table class="NRefec">
+  <tr><th>Supports</th><th>JSON Profile File</th><th>Connection</th><th>Phases</th><th>Battery Support</th><th>Default Port / Baudrate</th><th>Primary Source Documentation / Register Maps</th></tr>
+  <tr><td>Growatt<br>(SPH, SPA, MIN, MOD, MID, MAX)</td><td>growatt_sph.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes (Hybrid/Storage)</td><td>9600 baud / Port 502</td><td>Verified via the official <a href="https://github.com/johanmeijer/grott/blob/master/documentatie/Growatt-Inverter-Modbus-RTU-Protocol-II-V1-24-English-new.pdf">Growatt Modbus RTU Protocol II Manual (Direct PDF)</a> and mapped via the open-source <a href="https://github.com/Lu-Fi/ha-growatt-modbus">ha-growatt-modbus Repository</a>.</td></tr>
+  <tr><td>GoodWe<br>(ET, EH, ES, EM)</td><td>goodwe_et.json</td><td>TCP</td><td>1 - 3</td><td>Yes</td><td>Port 8899</td><td>Core register definitions mapped directly from the official <a href="https://github.com/home-assistant/core/tree/dev/homeassistant/components/goodwe">Home Assistant GoodWe Inverter Component</a>.</td></tr>
+  <tr><td>SolaX Power<br>(X1, X3, Hybrid Gen2-Gen5)</td><td>solax_hybrid.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes</td><td>9600 or 115200 / Port 502</td><td>Multi-generation maps (Gen 2-5) maintained in the master <a href="https://github.com/wills106/homeassistant-solax-modbus">homeassistant-solax-modbus Registry</a>.</td></tr>
+  <tr><td>SolarEdge<br>(All Models)</td><td>solaredge_sunspec.json</td><td>TCP</td><td>1 - 3</td><td>Yes (with StoreEdge)</td><td>Port 1502 (or 502)</td><td>SunSpec protocol standard. Full register offsets (Inverter DID 101/103, Meter DID 201/203) are detailed in the official <a href="https://knowledge-center.solaredge.com/sites/kc/files/sunspec-implementation-technical-note.pdf">SolarEdge SunSpec Implementation Guide (PDF)</a> and <a href="https://sunspec.org/specifications/">SunSpec Specifications Library</a>.</td></tr>
+  <tr><td>Fronius<br>(Primo, Symo, Gen24, Tauro)</td><td>fronius_sunspec.json</td><td>TCP</td><td>1 - 3</td><td>Yes (Gen24 series)</td><td>Port 502</td><td>SunSpec standard maps (Inverter blocks and Meter DID 201-203) are available in the <a href="https://praktis.sk/___files/produkty/dokumenty/Fronius_Datamanager_Modbus_TCP&RTU_20230209_233931.pdf">Fronius Datamanager Modbus Guide (PDF)</a>. Advanced blocks are linked via the <a href="https://sunspec.org/specifications/">SunSpec Specifications Library</a>.</td></tr>
+  <tr><td>Deye / Sunsynk / Solark<br>(Hybrid Series)</td><td>deye_hybrid.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes</td><td>9600 baud / Port 502</td><td>Advanced EMS Time-of-Use control registers decoded in the <a href="https://github.com/Developer089/deye-modbus-ha">deye-modbus-ha Project</a>.</td></tr>
+  <tr><td>Sofar Solar<br>(HYD Series &amp; Grid-tied)</td><td>sofar_hyd.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes (HYD series)</td><td>9600 baud / Port 502</td><td>Target register block frames extracted directly from the <a href="https://github.com/home-assistant/core/tree/dev/homeassistant/components/sofar">Home Assistant Sofar Inverter Component</a>.</td></tr>
+</table>
 
 Add more by creating new JSON profiles.
+
+If you find something not correct in a JSON file make a pull request and / or report an issue.
 
 ## License
 
