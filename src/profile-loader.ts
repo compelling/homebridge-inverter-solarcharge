@@ -89,6 +89,7 @@ export class ProfileLoader {
  */
 export class DynamicInverterProfile extends InverterProfile {
   readonly config: InverterProfileConfig;
+  readonly killSwitch = true; // during developement only log updates but do not perform actual Modbus writes
 
   constructor(config: InverterProfileConfig, log: Logging) {
     super(log);
@@ -106,13 +107,27 @@ export class DynamicInverterProfile extends InverterProfile {
       // Read input registers for all metrics
       // Collect all unique registers to minimize Modbus calls
       const registerSet = new Set<number>();
-      if (tm.solarPowerRegister) registerSet.add(tm.solarPowerRegister);
-      if (tm.exportPowerRegister) registerSet.add(tm.exportPowerRegister);
-      if (tm.importPowerRegister) registerSet.add(tm.importPowerRegister);
-      if (tm.loadPowerRegister) registerSet.add(tm.loadPowerRegister);
-      if (tm.batteryChargePowerRegister) registerSet.add(tm.batteryChargePowerRegister);
-      if (tm.batteryDischargePowerRegister) registerSet.add(tm.batteryDischargePowerRegister);
-      if (tm.batterySocRegister) registerSet.add(tm.batterySocRegister);
+      if (tm.solarPowerRegister) {
+        registerSet.add(tm.solarPowerRegister);
+      }
+      if (tm.exportPowerRegister) {
+        registerSet.add(tm.exportPowerRegister);
+      }
+      if (tm.importPowerRegister) {
+        registerSet.add(tm.importPowerRegister);
+      }
+      if (tm.loadPowerRegister) {
+        registerSet.add(tm.loadPowerRegister);
+      }
+      if (tm.batteryChargePowerRegister) {
+        registerSet.add(tm.batteryChargePowerRegister);
+      }
+      if (tm.batteryDischargePowerRegister) {
+        registerSet.add(tm.batteryDischargePowerRegister);
+      }
+      if (tm.batterySocRegister) {
+        registerSet.add(tm.batterySocRegister);
+      }
 
       const registers = Array.from(registerSet).sort((a, b) => a - b);
 
@@ -231,6 +246,10 @@ export class DynamicInverterProfile extends InverterProfile {
     stopHour = 21,
     minimumSoC?: number,
   ): Promise<boolean> {
+    if (this.killSwitch) {
+      this.log.warn(`[${this.config.name}] SetDischargeSettings blocked by kill switch`);
+      return true;
+    }
     try {
       const cm = this.config.control;
 
@@ -282,8 +301,12 @@ export class DynamicInverterProfile extends InverterProfile {
     stopSoC = 100,
   ): Promise<boolean> {
     try {
-      const cm = this.config.control;
+      if (this.killSwitch) {
+        this.log.warn(`[${this.config.name}] SetChargeSettings blocked by kill switch`);
+        return true;
+      }
 
+      const cm = this.config.control;
       if (!cm.chargeStartTimeRegister || !cm.chargeStopTimeRegister || !cm.chargeEnableRegister) {
         this.log.warn(`[${this.config.name}] Charge not configured in profile`);
         return false;
@@ -324,7 +347,9 @@ export class DynamicInverterProfile extends InverterProfile {
     registerMap: Map<number, number>,
     registerAddress?: number,
   ): number {
-    if (!registerAddress) return 0;
+    if (!registerAddress) {
+      return 0;
+    }
     return registerMap.get(registerAddress) ?? 0;
   }
 

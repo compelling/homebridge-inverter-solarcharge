@@ -190,14 +190,14 @@ export abstract class InverterProfile {
    */
   protected encodeTime(hour: number, minute: number, format: TimeFormat): number {
     switch (format) {
-      case 'PackedBytes':
-        return (hour << 8) | minute;
-      case 'MinutesFromMidnight':
-        return hour * 60 + minute;
-      case 'RawInteger':
-        return hour;
-      default:
-        return hour;
+    case 'PackedBytes':
+      return (hour << 8) | minute;
+    case 'MinutesFromMidnight':
+      return hour * 60 + minute;
+    case 'RawInteger':
+      return hour;
+    default:
+      return hour;
     }
   }
 
@@ -206,23 +206,23 @@ export abstract class InverterProfile {
    */
   protected decodeTime(value: number, format: TimeFormat): { hour: number; minute: number } {
     switch (format) {
-      case 'PackedBytes':
-        return {
-          hour: (value >> 8) & 0xff,
-          minute: value & 0xff,
-        };
-      case 'MinutesFromMidnight':
-        return {
-          hour: Math.floor(value / 60) % 24,
-          minute: value % 60,
-        };
-      case 'RawInteger':
-        return {
-          hour: value % 24,
-          minute: 0,
-        };
-      default:
-        return { hour: 0, minute: 0 };
+    case 'PackedBytes':
+      return {
+        hour: (value >> 8) & 0xff,
+        minute: value & 0xff,
+      };
+    case 'MinutesFromMidnight':
+      return {
+        hour: Math.floor(value / 60) % 24,
+        minute: value % 60,
+      };
+    case 'RawInteger':
+      return {
+        hour: value % 24,
+        minute: 0,
+      };
+    default:
+      return { hour: 0, minute: 0 };
     }
   }
 
