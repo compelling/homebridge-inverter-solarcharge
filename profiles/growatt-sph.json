@@ -13,14 +13,18 @@
     "modbusSlaveId": 1
   },
   "telemetry": {
-    "solarPowerRegister": 1009,
-    "loadPowerRegister": 1012,
-    "exportPowerRegister": 1010,
-    "importPowerRegister": 1011,
-    "batteryChargePowerRegister": 1013,
-    "batteryDischargePowerRegister": 1014,
-    "batterySocRegister": 1019,
-    "scalingFactor": 1
+    "solarPowerRegister": 1,
+    "batterySocRegister": 1014,
+    "importPowerRegister": 1021,
+    "exportPowerRegister": 1029,
+    "loadPowerRegister": 1037,
+    "u32Registers": [
+      1,
+      1021,
+      1029,
+      1037
+    ],
+    "scalingFactor": 0.1
   },
   "control": {
     "dischargeRateRegister": 1070,

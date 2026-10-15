@@ -39,11 +39,12 @@ export interface TelemetryMap {
   loadPowerRegister: number;       // Household consumption (W)
   exportPowerRegister: number;     // Power to grid (W)
   importPowerRegister: number;     // Power from grid (W)
-  batteryChargePowerRegister: number;   // Charging rate (W)
-  batteryDischargePowerRegister: number; // Discharging rate (W)
+  batteryChargePowerRegister?: number;   // Charging rate (W)
+  batteryDischargePowerRegister?: number; // Discharging rate (W)
   batterySocRegister: number;      // Battery State of Charge (%)
   acFrequencyRegister?: number;    // Grid frequency (Hz)
   inverterTemperatureRegister?: number; // Device temperature (°C)
+  u32Registers?: number[];         // Registers holding 32-bit values (high word first, spans 2 registers)
   scalingFactor: number;           // Multiplier: e.g., 0.1 for W→kW, 1 for direct
 }
 
@@ -136,6 +137,9 @@ export interface ChargeDischargeState {
 export abstract class InverterProfile {
   abstract readonly config: InverterProfileConfig;
 
+  /** Enables verbose raw-register logging (set from the plugin's logLevel config). */
+  debugLogging = false;
+
   constructor(protected log: Logging) {}
 
   /**
@@ -147,12 +151,12 @@ export abstract class InverterProfile {
   /**
    * Reads battery discharge/sell-to-grid settings from Modbus holding registers.
    */
-  abstract readDischargeSettings(modbusClient: any): Promise<ChargeDischargeState | null>;
+  abstract readDischargeSettings(modbusClient: any, includeTimes?: boolean): Promise<ChargeDischargeState | null>;
 
   /**
    * Reads battery charge/buy-from-grid settings from Modbus holding registers.
    */
-  abstract readChargeSettings(modbusClient: any): Promise<ChargeDischargeState | null>;
+  abstract readChargeSettings(modbusClient: any, includeTimes?: boolean): Promise<ChargeDischargeState | null>;
 
   /**
    * Sets discharge enable/disable and optionally updates schedule.

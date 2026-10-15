@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import type { Logging } from 'homebridge';
 import type {
   InverterProfileConfig,
@@ -8,13 +9,27 @@ import type {
 } from './inverter-profile.js';
 import { InverterProfile } from './inverter-profile.js';
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null) {
+    return JSON.stringify(error, Object.getOwnPropertyNames(error));
+  }
+  return String(error);
+}
+
 /**
  * Dynamic inverter profile loader.
  * Reads JSON profile configurations and instantiates InverterProfile implementations.
  * Supports runtime loading of new inverter profiles without code recompilation.
  */
 export class ProfileLoader {
-  private static readonly profilesDirectory = join(__dirname, '..', 'profiles');
+  private static readonly profilesDirectory = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'profiles',
+  );
   private static cache: Map<string, InverterProfileConfig> = new Map();
 
   /**
@@ -27,7 +42,9 @@ export class ProfileLoader {
     }
 
     try {
-      const files = readdirSync(this.profilesDirectory).filter((f) => f.endsWith('.json'));
+      const files = readdirSync(this.profilesDirectory).filter((f) =>
+        f.endsWith('.json'),
+      );
 
       for (const file of files) {
         const filePath = join(this.profilesDirectory, file);
@@ -67,7 +84,9 @@ export class ProfileLoader {
    */
   static listByManufacturer(manufacturer: string): InverterProfileConfig[] {
     const all = this.loadAllProfiles();
-    return Array.from(all.values()).filter((p) => p.manufacturer === manufacturer);
+    return Array.from(all.values()).filter(
+      (p) => p.manufacturer === manufacturer,
+    );
   }
 
   /**
@@ -104,78 +123,57 @@ export class DynamicInverterProfile extends InverterProfile {
       const tm = this.config.telemetry;
       const scale = tm.scalingFactor ?? 1;
 
-      // Read input registers for all metrics
-      // Collect all unique registers to minimize Modbus calls
-      const registerSet = new Set<number>();
-      if (tm.solarPowerRegister) {
-        registerSet.add(tm.solarPowerRegister);
-      }
-      if (tm.exportPowerRegister) {
-        registerSet.add(tm.exportPowerRegister);
-      }
-      if (tm.importPowerRegister) {
-        registerSet.add(tm.importPowerRegister);
-      }
-      if (tm.loadPowerRegister) {
-        registerSet.add(tm.loadPowerRegister);
-      }
-      if (tm.batteryChargePowerRegister) {
-        registerSet.add(tm.batteryChargePowerRegister);
-      }
-      if (tm.batteryDischargePowerRegister) {
-        registerSet.add(tm.batteryDischargePowerRegister);
-      }
-      if (tm.batterySocRegister) {
-        registerSet.add(tm.batterySocRegister);
-      }
+      const u32 = new Set(tm.u32Registers ?? []);
 
-      const registers = Array.from(registerSet).sort((a, b) => a - b);
-
-      if (registers.length === 0) {
-        this.log.warn(`[${this.config.name}] No telemetry registers configured`);
-        return this.defaultMetrics();
-      }
-
-      // Read the smallest contiguous range
-      const minReg = registers[0];
-      const maxReg = registers[registers.length - 1];
-      const rangeSize = maxReg - minReg + 1;
-
-      const values = await modbusClient.readInputRegisters(minReg, rangeSize);
-      const registerMap = new Map<number, number>();
-
-      for (let i = 0; i < registers.length; i++) {
-        const regAddr = registers[i];
-        const offset = regAddr - minReg;
-        if (offset < values.length) {
-          registerMap.set(regAddr, values[offset]);
+      // Registers can be far apart, so read each one individually (u32 values span 2 registers)
+      const read = async (register?: number): Promise<number> => {
+        if (!register) {
+          return 0;
         }
-      }
+        if (u32.has(register)) {
+          const res = await modbusClient.readInputRegisters(register, 2);
+          return (res?.data?.[0] ?? 0) * 65536 + (res?.data?.[1] ?? 0);
+        }
+        const res = await modbusClient.readInputRegisters(register, 1);
+        return res?.data?.[0] ?? 0;
+      };
+
+      const solar = await read(tm.solarPowerRegister);
+      const exportP = await read(tm.exportPowerRegister);
+      const importP = await read(tm.importPowerRegister);
+      const load = await read(tm.loadPowerRegister);
+      const charge = await read(tm.batteryChargePowerRegister);
+      const discharge = await read(tm.batteryDischargePowerRegister);
+      const soc = await read(tm.batterySocRegister);
 
       return {
-        solarPower: this.readRegister(registerMap, tm.solarPowerRegister) * scale,
-        exportPower: this.readRegister(registerMap, tm.exportPowerRegister) * scale,
-        importPower: this.readRegister(registerMap, tm.importPowerRegister) * scale,
-        loadPower: this.readRegister(registerMap, tm.loadPowerRegister) * scale,
-        batteryChargePower: this.readRegister(registerMap, tm.batteryChargePowerRegister) * scale,
-        batteryDischargePower:
-          this.readRegister(registerMap, tm.batteryDischargePowerRegister) * scale,
-        batterySoC: this.readRegister(registerMap, tm.batterySocRegister),
+        solarPower: solar * scale,
+        exportPower: exportP * scale,
+        importPower: importP * scale,
+        loadPower: load * scale,
+        batteryChargePower: charge * scale,
+        batteryDischargePower: discharge * scale,
+        batterySoC: Math.min(Math.max(soc, 0), 100),
         acFrequency: tm.acFrequencyRegister
-          ? this.readRegister(registerMap, tm.acFrequencyRegister)
+          ? await read(tm.acFrequencyRegister)
           : undefined,
         inverterTemperature: tm.inverterTemperatureRegister
-          ? this.readRegister(registerMap, tm.inverterTemperatureRegister)
+          ? await read(tm.inverterTemperatureRegister)
           : undefined,
       };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(`[${this.config.name}] Failed to read metrics: ${errorMsg}`);
+      const errorMsg = describeError(error);
+      this.log.error(
+        `[${this.config.name}] Failed to read metrics: ${errorMsg}`,
+      );
       throw error;
     }
   }
 
-  async readDischargeSettings(modbusClient: any): Promise<ChargeDischargeState | null> {
+  async readDischargeSettings(
+    modbusClient: any,
+    includeTimes = false,
+  ): Promise<ChargeDischargeState | null> {
     try {
       const cm = this.config.control;
 
@@ -188,26 +186,53 @@ export class DynamicInverterProfile extends InverterProfile {
         return null;
       }
 
-      const regs = await modbusClient.readHoldingRegisters(cm.dischargeStartTimeRegister, 4);
+      const readHolding = async (register: number): Promise<number> =>
+        (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
 
-      const startTime = this.decodeTime(regs[0], this.config.encoding.timeFormat);
-      const stopTime = this.decodeTime(regs[1], this.config.encoding.timeFormat);
-      const enable = regs[3] !== 0;
+      const enableRaw = await readHolding(cm.dischargeEnableRegister);
+      const enable = enableRaw === 1;
+
+      if (!includeTimes && !this.debugLogging) {
+        return { startHour: 0, stopHour: 0, enable };
+      }
+
+      const startRaw = await readHolding(cm.dischargeStartTimeRegister);
+      const stopRaw = await readHolding(cm.dischargeStopTimeRegister);
+      const startTime = this.decodeTime(
+        startRaw,
+        this.config.encoding.timeFormat,
+      );
+      const stopTime = this.decodeTime(
+        stopRaw,
+        this.config.encoding.timeFormat,
+      );
+      if (this.debugLogging) {
+        this.log.info(
+          `[${this.config.name}] discharge raw -> start=0x${startRaw.toString(16)} stop=0x${stopRaw.toString(16)} enable=${enableRaw}`,
+        );
+      }
 
       return {
         startHour: startTime.hour,
         stopHour: stopTime.hour,
         enable,
-        stopSoC: cm.dischargeStopSocRegister ? regs[2] : undefined,
+        stopSoC: cm.dischargeStopSocRegister
+          ? await readHolding(cm.dischargeStopSocRegister)
+          : undefined,
       };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(`[${this.config.name}] Failed to read discharge settings: ${errorMsg}`);
+      const errorMsg = describeError(error);
+      this.log.error(
+        `[${this.config.name}] Failed to read discharge settings: ${errorMsg}`,
+      );
       return null;
     }
   }
 
-  async readChargeSettings(modbusClient: any): Promise<ChargeDischargeState | null> {
+  async readChargeSettings(
+    modbusClient: any,
+    includeTimes = false,
+  ): Promise<ChargeDischargeState | null> {
     try {
       const cm = this.config.control;
 
@@ -220,21 +245,45 @@ export class DynamicInverterProfile extends InverterProfile {
         return null;
       }
 
-      const regs = await modbusClient.readHoldingRegisters(cm.chargeStartTimeRegister, 4);
+      const readHolding = async (register: number): Promise<number> =>
+        (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
 
-      const startTime = this.decodeTime(regs[0], this.config.encoding.timeFormat);
-      const stopTime = this.decodeTime(regs[1], this.config.encoding.timeFormat);
-      const enable = regs[3] !== 0;
+      const enableRaw = await readHolding(cm.chargeEnableRegister);
+      const enable = enableRaw === 1;
+
+      if (!includeTimes && !this.debugLogging) {
+        return { startHour: 0, stopHour: 0, enable };
+      }
+
+      const startRaw = await readHolding(cm.chargeStartTimeRegister);
+      const stopRaw = await readHolding(cm.chargeStopTimeRegister);
+      const startTime = this.decodeTime(
+        startRaw,
+        this.config.encoding.timeFormat,
+      );
+      const stopTime = this.decodeTime(
+        stopRaw,
+        this.config.encoding.timeFormat,
+      );
+      if (this.debugLogging) {
+        this.log.info(
+          `[${this.config.name}] charge raw -> start=0x${startRaw.toString(16)} stop=0x${stopRaw.toString(16)} enable=${enableRaw}`,
+        );
+      }
 
       return {
         startHour: startTime.hour,
         stopHour: stopTime.hour,
         enable,
-        stopSoC: cm.chargeStopSocRegister ? regs[2] : undefined,
+        stopSoC: cm.chargeStopSocRegister
+          ? await readHolding(cm.chargeStopSocRegister)
+          : undefined,
       };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(`[${this.config.name}] Failed to read charge settings: ${errorMsg}`);
+      const errorMsg = describeError(error);
+      this.log.error(
+        `[${this.config.name}] Failed to read charge settings: ${errorMsg}`,
+      );
       return null;
     }
   }
@@ -247,7 +296,9 @@ export class DynamicInverterProfile extends InverterProfile {
     minimumSoC?: number,
   ): Promise<boolean> {
     if (this.killSwitch) {
-      this.log.warn(`[${this.config.name}] SetDischargeSettings blocked by kill switch`);
+      this.log.warn(
+        `[${this.config.name}] SetDischargeSettings blocked by kill switch`,
+      );
       return true;
     }
     try {
@@ -258,12 +309,22 @@ export class DynamicInverterProfile extends InverterProfile {
         !cm.dischargeStopTimeRegister ||
         !cm.dischargeEnableRegister
       ) {
-        this.log.warn(`[${this.config.name}] Discharge not configured in profile`);
+        this.log.warn(
+          `[${this.config.name}] Discharge not configured in profile`,
+        );
         return false;
       }
 
-      const startValue = this.encodeTime(startHour, 0, this.config.encoding.timeFormat);
-      const stopValue = this.encodeTime(stopHour, 0, this.config.encoding.timeFormat);
+      const startValue = this.encodeTime(
+        startHour,
+        0,
+        this.config.encoding.timeFormat,
+      );
+      const stopValue = this.encodeTime(
+        stopHour,
+        0,
+        this.config.encoding.timeFormat,
+      );
 
       const registersToWrite: Array<[number, number]> = [
         [cm.dischargeStartTimeRegister, startValue],
@@ -287,8 +348,10 @@ export class DynamicInverterProfile extends InverterProfile {
       );
       return true;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(`[${this.config.name}] Failed to set discharge settings: ${errorMsg}`);
+      const errorMsg = describeError(error);
+      this.log.error(
+        `[${this.config.name}] Failed to set discharge settings: ${errorMsg}`,
+      );
       return false;
     }
   }
@@ -302,18 +365,32 @@ export class DynamicInverterProfile extends InverterProfile {
   ): Promise<boolean> {
     try {
       if (this.killSwitch) {
-        this.log.warn(`[${this.config.name}] SetChargeSettings blocked by kill switch`);
+        this.log.warn(
+          `[${this.config.name}] SetChargeSettings blocked by kill switch`,
+        );
         return true;
       }
 
       const cm = this.config.control;
-      if (!cm.chargeStartTimeRegister || !cm.chargeStopTimeRegister || !cm.chargeEnableRegister) {
+      if (
+        !cm.chargeStartTimeRegister ||
+        !cm.chargeStopTimeRegister ||
+        !cm.chargeEnableRegister
+      ) {
         this.log.warn(`[${this.config.name}] Charge not configured in profile`);
         return false;
       }
 
-      const startValue = this.encodeTime(startHour, 0, this.config.encoding.timeFormat);
-      const stopValue = this.encodeTime(stopHour, 0, this.config.encoding.timeFormat);
+      const startValue = this.encodeTime(
+        startHour,
+        0,
+        this.config.encoding.timeFormat,
+      );
+      const stopValue = this.encodeTime(
+        stopHour,
+        0,
+        this.config.encoding.timeFormat,
+      );
 
       const registersToWrite: Array<[number, number]> = [
         [cm.chargeStartTimeRegister, startValue],
@@ -337,8 +414,10 @@ export class DynamicInverterProfile extends InverterProfile {
       );
       return true;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(`[${this.config.name}] Failed to set charge settings: ${errorMsg}`);
+      const errorMsg = describeError(error);
+      this.log.error(
+        `[${this.config.name}] Failed to set charge settings: ${errorMsg}`,
+      );
       return false;
     }
   }
@@ -370,7 +449,10 @@ export class DynamicInverterProfile extends InverterProfile {
  * Factory to create inverter profiles from JSON config or profile name.
  */
 export class InverterProfileFactory {
-  static createFromName(profileName: string, log: Logging): InverterProfile | null {
+  static createFromName(
+    profileName: string,
+    log: Logging,
+  ): InverterProfile | null {
     const config = ProfileLoader.getProfile(profileName);
     if (!config) {
       log.error(`Profile not found: ${profileName}`);
@@ -379,7 +461,10 @@ export class InverterProfileFactory {
     return new DynamicInverterProfile(config, log);
   }
 
-  static createFromConfig(config: InverterProfileConfig, log: Logging): InverterProfile {
+  static createFromConfig(
+    config: InverterProfileConfig,
+    log: Logging,
+  ): InverterProfile {
     return new DynamicInverterProfile(config, log);
   }
 
@@ -391,7 +476,9 @@ export class InverterProfileFactory {
     return ProfileLoader.listManufacturers();
   }
 
-  static getProfilesByManufacturer(manufacturer: string): InverterProfileConfig[] {
+  static getProfilesByManufacturer(
+    manufacturer: string,
+  ): InverterProfileConfig[] {
     return ProfileLoader.listByManufacturer(manufacturer);
   }
 

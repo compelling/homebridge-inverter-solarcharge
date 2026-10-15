@@ -21,6 +21,8 @@ interface CustomModbusClient {
     options: { baudRate: number },
   ): Promise<void>;
   setID(id: number): void;
+  setTimeout(duration: number): void;
+  close(callback: () => void): void;
   readInputRegisters(
     dataAddress: number,
     length: number,
@@ -82,6 +84,7 @@ class DataBuffer {
 }
 
 export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
+  private readonly debugLogging: boolean;
   // Cast the imported constructor to an unknown constructable object that outputs our interface.
   // This satisfies both the compiler and the strict 'no-explicit-any' ESLint rule.
   private readonly modbusClient =
@@ -98,6 +101,11 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private readonly pollInterval: number = 5000; // Fixed polling: 5 seconds (hardcoded)
   private readonly uploadInterval!: number; // Aggregated upload interval (1-60 minutes)
 
+  private connecting = false;
+  private polling = false;
+  private lastBuying = false;
+  private lastSending = false;
+  private retryCount = 0;
   private pollingTimer?: NodeJS.Timeout;
   private uploadTimer?: NodeJS.Timeout;
   private dataBuffer!: DataBuffer;
@@ -117,6 +125,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     public readonly config: PlatformConfig,
     public readonly api: API,
   ) {
+    this.debugLogging = config?.logLevel === 'debug';
     if (!config || !config.plantId || !config.serialNum) {
       this.log.warn(
         'Plugin is not configured yet. Please enter your plantId and serialNum in the Homebridge UI.',
@@ -346,6 +355,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
               const sellState =
                 await this.activeProfile?.readDischargeSettings(
                   this.modbusClient,
+                  true,
                 );
               if (sellState) {
                 await this.setInverterSettings({
@@ -485,6 +495,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
               const buyState =
                 await this.activeProfile?.readChargeSettings(
                   this.modbusClient,
+                  true,
                 );
               if (buyState) {
                 await this.setInverterSettings({
@@ -538,6 +549,11 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   }
 
   private async connectAndStartPolling(): Promise<void> {
+    if (this.connecting) {
+      return;
+    }
+    this.connecting = true;
+    this.stopTimers();
     // Make sure HomeKit UI elements are ready (discover or create Solar Inverter and Solar Battery accessories)
     this.discoverDevices();
 
@@ -551,14 +567,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       // Connect based on configuration (RTU serial or TCP network)
       if (this.ipAddress) {
         // TCP connection
-        const timeoutPromise = new Promise<void>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('TCP connection timeout after 10 seconds')),
-            10000,
-          ),
-        );
-
-        // For TCP, we would use ModbusRTU.connectTCP() - adjust as needed for your setup
+        // TCP is not implemented yet; falls back to RTU
         this.log.warn('⚠️ TCP support is configured but not fully implemented yet. Using RTU fallback.');
         await this.modbusClient.connectRTUBuffered(this.serialPort || '/dev/ttyUSB0', {
           baudRate: 9600,
@@ -570,17 +579,24 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           { baudRate: 9600 },
         );
 
-        const timeoutPromise = new Promise<void>((_, reject) =>
-          setTimeout(
+        let timeoutHandle: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<void>((_, reject) => {
+          timeoutHandle = setTimeout(
             () => reject(new Error('Modbus connection timeout after 10 seconds')),
             10000,
-          ),
-        );
+          );
+        });
 
-        await Promise.race([connectionPromise, timeoutPromise]);
+        try {
+          await Promise.race([connectionPromise, timeoutPromise]);
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
       }
 
       this.modbusClient.setID(1);
+      this.modbusClient.setTimeout(3000);
+      this.retryCount = 0;
       this.log.info('✅ Modbus connection established successfully!');
 
       // Load inverter profile (auto-detect or manual)
@@ -620,9 +636,30 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.log.error(
         `❌ Failed to establish Modbus connection: ${error.message}`,
       );
-      // Retry connection after 30 seconds
-      this.log.info('⏳ Retrying connection in 30 seconds...');
-      setTimeout(() => this.connectAndStartPolling(), 30000);
+      this.stopTimers();
+      try {
+        this.modbusClient.close(() => undefined);
+      } catch {
+        // port may not be open
+      }
+      // Exponential backoff: 30s, 60s, ... max 5 minutes
+      this.retryCount++;
+      const delay = Math.min(30000 * 2 ** (this.retryCount - 1), 300000);
+      this.log.info(`⏳ Retrying connection in ${delay / 1000} seconds...`);
+      setTimeout(() => this.connectAndStartPolling(), delay);
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  private stopTimers(): void {
+    if (this.pollingTimer) {
+      clearInterval(this.pollingTimer);
+      this.pollingTimer = undefined;
+    }
+    if (this.uploadTimer) {
+      clearInterval(this.uploadTimer);
+      this.uploadTimer = undefined;
     }
   }
 
@@ -683,6 +720,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       if (matchedProfileName) {
         const profile = InverterProfileFactory.createFromName(matchedProfileName, this.log);
         this.activeProfile = profile || undefined;
+        if (profile) {
+          profile.debugLogging = this.debugLogging;
+        }
 
         if (this.activeProfile) {
           this.log.info(
@@ -710,6 +750,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
       const profile = InverterProfileFactory.createFromName(this.inverterProfileName, this.log);
       this.activeProfile = profile || undefined;
+      if (profile) {
+        profile.debugLogging = this.debugLogging;
+      }
 
       if (this.activeProfile) {
         this.log.info(
@@ -720,6 +763,11 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   }
 
   private async pollInverterData(): Promise<void> {
+    if (this.polling) {
+      this.log.debug('Previous poll still running, skipping.');
+      return;
+    }
+    this.polling = true;
     try {
       this.log.debug('Polling inverter for data...');
 
@@ -754,14 +802,20 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       const acChargeState = await this.activeProfile?.readChargeSettings(
         this.modbusClient,
       );
-      const isBuyingFromGrid = acChargeState?.enable ?? false;
+      if (acChargeState) {
+        this.lastBuying = acChargeState.enable;
+      }
+      const isBuyingFromGrid = this.lastBuying;
 
       // Read Discharge settings to determine if sending to grid
       const dischargeState =
         await this.activeProfile?.readDischargeSettings(
           this.modbusClient,
         );
-      const isSendingToGrid = dischargeState?.enable ?? false;
+      if (dischargeState) {
+        this.lastSending = dischargeState.enable;
+      }
+      const isSendingToGrid = this.lastSending;
 
       const gridMode = isBuyingFromGrid
         ? 'BUYING'
@@ -812,6 +866,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       }
     } catch (error: any) {
       this.log.error(`Error during inverter polling: ${error.message}`);
+    } finally {
+      this.polling = false;
     }
   }
 
