@@ -271,17 +271,25 @@ Uses network address from `config.json` `port` field (e.g., `192.168.1.100:502`)
 ## Development
 
 ```bash
-# Install dependencies
+# On your computer, install dependencies for this plugin
 npm install
 
-# Compile TypeScript
+# On your computer, compile TypeScript
 npm run build
 
-# Watch & auto-rebuild
-npm run watch
+# On your Raspberry pi, setup a symlink from HB to your home folder
+ssh USERID@192.168.x.y
+sudo ln -s ~/homebridge-inverter-solarcharge /var/lib/homebridge/node_modules/homebridge-inverter-solarcharge
+chmod -R 755 ~/homebridge-growatt-solarcharge
 
-# Run in debug mode
-homebridge -D
+# Check the HB process has permission to home directory
+sudo -u homebridge cat /var/lib/homebridge/node_modules/homebridge-growatt-solarcharge/package.json
+
+# On your computer, initate copying of changes 
+rsync -avz --delete /Users/USERID/work/homebridge-inverter-solarcharge/ USERID@192.168.x.y:~/homebridge-inverter-solarcharge/
+
+# Restart HB
+sudo systemctl restart homebridge
 ```
 
 ## File Structure

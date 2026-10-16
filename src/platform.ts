@@ -216,12 +216,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   //
   // 📱 HOMEBRIDGE INVERTER SOLARCHARGE PLUGIN
   // ├─ 🔌 ACCESSORY 1: "Solar Inverter"
-  // │  ├─ 🔘 Switch → "Inverter Connected" (toggle on Home screen, ON means buy power from grid)
-  // │  └─ 💡 LightSensor → "Inverter Production" (Lux on Home screen equals Kilowatts)
+  // │  ├─ 💡 LightSensor → "Inverter Production" (Lux on Home screen equals Kilowatts)
+  // │  └─ 🔘 Switch → "Inverter Connected" (toggle on Home screen, ON means buy power from grid)
   // │
   // └─ 🔌 ACCESSORY 2: "Solar Battery"
-  //    ├─ 🔘 Switch → "Battery Status" (big tile on Home screen, ON means sell battery power to grid)
-  //    └─ 🌡️ TemperatureSensor → "Battery Level" (Degrees on Home screen equals %)
+  //    ├─ 🌡️ TemperatureSensor → "Battery Level" (Degrees on Home screen equals %)
+  //    └─ 🔘 Switch → "Battery Status" (toggle on Home screen, ON means sell battery power to grid)
 
   private discoverDevices(): void {
     const inverterUuid = this.api.hap.uuid.generate(
@@ -279,6 +279,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.inverterAccessory.addService(this.api.hap.Service.LightSensor);
 
     if (this.lightSensorService) {
+      // Allow 0 (default minimum is 0.0001, which the Home app shows as 0,0001 lux)
+      this.lightSensorService
+        .getCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel)
+        .setProps({ minValue: 0 });
       this.lightSensorService
         .setCharacteristic(
           this.api.hap.Characteristic.Name,
@@ -286,7 +290,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         )
         .setCharacteristic(
           this.api.hap.Characteristic.CurrentAmbientLightLevel,
-          0.0001, // HomeKit minimum lux value
+          0,
         );
     }
 
@@ -391,7 +395,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         });
     }
 
-    // --- SOLAR BATTERY ACCESSORY 2 (Switch as primary + TemperatureSensor as secondary) ---
+    // --- SOLAR BATTERY ACCESSORY 2 (TemperatureSensor as primary + Switch as secondary) ---
     let batteryLevelAccessory = this.accessories.find(
       (acc: PlatformAccessory) => acc.UUID === batteryLevelUuid,
     );
@@ -403,8 +407,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         batteryLevelUuid,
       );
 
-      // Set category to SWITCH (creates a big tile on Home screen)
-      batteryLevelAccessory.category = this.api.hap.Categories.SWITCH;
+      batteryLevelAccessory.category = this.api.hap.Categories.SENSOR;
 
       // Setup Accessory Information
       batteryLevelAccessory
@@ -415,13 +418,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           this.inverterType,
         );
 
-      // Add Switch as PRIMARY service (shows as big tile on Home screen)
+      // Switch (secondary; shown when the tile is opened)
       batteryLevelAccessory.addService(
         this.api.hap.Service.Switch,
         'Battery Status',
       );
 
-      // Add TemperatureSensor as SECONDARY service (shows battery level in details)
+      // TemperatureSensor is the PRIMARY service (shows battery level on the tile)
       batteryLevelAccessory.addService(
         this.api.hap.Service.TemperatureSensor,
         'Battery Level',
@@ -542,6 +545,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     }
 
     if (this.temperatureSensorService) {
+      // Primary service decides what the Home app shows on the tile (SoC, not switch state)
+      this.temperatureSensorService.setPrimaryService(true);
+      this.batterySwitchService?.setPrimaryService(false);
       this.temperatureSensorService
         .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Level')
         .setCharacteristic(this.api.hap.Characteristic.CurrentTemperature, 50);
@@ -829,7 +835,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
       // Update Apple Home UI Elements with current (live) values
       // solarPower is in Watts, HomeKit uses Lux (1 W = 1 Lux)
-      const currentWatts = Math.max(solarPower, 0.0001); // HomeKit Lux minimum is 0.0001
+      const currentWatts = Math.round(Math.max(solarPower, 0) * 100) / 100;
 
       if (this.lightSensorService) {
         // Lux value maps 1:1 to current Watts
