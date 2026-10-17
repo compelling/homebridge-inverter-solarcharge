@@ -38,6 +38,7 @@ interface PowerMetrics {
   export: number; // kW
   pack: number; // kW (grid import)
   usage: number; // kW (local load)
+  soc?: number; // fraction 0-1 (latest battery state of charge)
 }
 
 class DataBuffer {
@@ -45,12 +46,16 @@ class DataBuffer {
   private exportSamples: number[] = [];
   private packSamples: number[] = [];
   private usageSamples: number[] = [];
+  private latestSoc?: number;
 
   add(metrics: PowerMetrics): void {
     this.solarSamples.push(metrics.solar);
     this.exportSamples.push(metrics.export);
     this.packSamples.push(metrics.pack);
     this.usageSamples.push(metrics.usage);
+    if (metrics.soc !== undefined) {
+      this.latestSoc = metrics.soc;
+    }
   }
 
   average(): PowerMetrics {
@@ -68,6 +73,7 @@ class DataBuffer {
       export: avg(this.exportSamples),
       pack: avg(this.packSamples),
       usage: avg(this.usageSamples),
+      soc: this.latestSoc,
     };
   }
 
@@ -80,6 +86,7 @@ class DataBuffer {
     this.exportSamples = [];
     this.packSamples = [];
     this.usageSamples = [];
+    this.latestSoc = undefined;
   }
 }
 
@@ -835,6 +842,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         export: exportKW / 1000,
         pack: packKW / 1000,
         usage: usageKW / 1000,
+        soc: Math.min(Math.max(batterySoC / 100, 0), 1),
       });
 
       // Read AC Charge settings to determine if buying from grid
@@ -922,7 +930,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
     this.log.info(
       `Uploading aggregated data (${sampleCount} samples) to SolarCharge API: ` +
-        `Solar=${avgMetrics.solar}kW, Export=${avgMetrics.export}kW, Import=${avgMetrics.pack}kW, Usage=${avgMetrics.usage}kW`,
+        `Solar=${avgMetrics.solar}kW, Export=${avgMetrics.export}kW, Import=${avgMetrics.pack}kW, Usage=${avgMetrics.usage}kW, SoC=${avgMetrics.soc ?? 'n/a'}`,
     );
 
     try {

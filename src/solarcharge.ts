@@ -8,6 +8,7 @@ export interface AggregatedMetrics {
   export: number; // kW
   pack: number; // kW (grid import)
   usage: number; // kW (local load)
+  soc?: number; // fraction 0-1 (battery state of charge)
 }
 
 export interface InverterSettingsPayload {
@@ -175,6 +176,7 @@ export class SolarChargeUploader {
             usage: metrics.usage, // Averaged kW (local load consumption)
             export: metrics.export, // Averaged kW (export to grid)
             pack: metrics.pack, // Averaged kW (grid import / battery charge)
+            soc: metrics.soc, // Latest battery state of charge as float 0-1
           }),
         },
       );
