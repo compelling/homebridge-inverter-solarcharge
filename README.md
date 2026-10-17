@@ -6,16 +6,16 @@
 
 # Homebridge Inverter SolarCharge Plugin
 
-A dynamic platform plugin for Homebridge that integrates solar inverters / home batteries via Modbus (RTU/TCP) and the SolarCharge service. Supports multiple inverter brands (Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar) through a JSON-based, zero-code extensible profile system.
+A dynamic platform plugin for Homebridge that integrates solar inverters / home batteries via Modbus (RTU/TCP) and the SolarCharge service. Supports multiple inverter brands through a JSON-based, zero-code extensible profile system.
 
 ## Features
 
 - **🔄 Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar
+
 - **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen (see separate section)
   - 💡 Solar Inverter tile using a light sensor to display Solar Production (tap to display switch to toggle on purchase of power from grid) 
-  - 🌡️ Solar Battery tile using a temperature sensor to display Battery Level (tap to display switch to toggle on sale of power to grid) 
-- **🔌 Dual Accessories**: Separate controls for charging (buy) and discharging (sell)
-- **☁️ Cloud Sync**: Fetch buy/sell times from SolarCharge API
+  - 🌡️ Solar Battery tile using a temperature sensor to display Battery Level (tap to display switch to toggle on sale of power to grid)
+- **☁️ Cloud Sync**: Fetch buy/sell times + upload aggregated metrics via SolarCharge API, use SolarCharge app to view your metrics and generate production forecasts
 - **⚡ Zero-Recompilation Extensibility**: Add new inverter brands via JSON profiles
 - **🌐 Modbus Support**: Both RTU (serial) and TCP (network) connections
 
@@ -29,26 +29,28 @@ npm install -g homebridge-inverter-solarcharge
 
 ### Configuration
 
-Add to your Homebridge `config.json`:
+Either fill in the plugin settings UI to configure the plugin or add this to your Homebridge `config.json`:
 
 ```json
 {
-  "platform": "SolarInverterCharge",
-  "name": "Solar Inverter",
-  "port": "/dev/ttyUSB0",
-  "inverterProfile": "auto",
-  "plantId": "your-plant-id",
-  "serialNum": "your-serial",
-  "baseUrl": "https://groshapp.com/test"
+   "name": "Solar Inverter",
+   "serialPort": "/dev/ttyUSB0",
+   "uploadInterval": 300,
+   "inverterProfile": "auto",
+   "logLevel": "debug",
+   "plantId": "see-your-plantId-in-SC-app",
+   "serialNum": "see-your-serial-in-SC-app",
+   "platform": "InverterSolarCharge"
 }
 ```
 
 **Configuration Options:**
-- `port`: Serial device (RTU) or network address (TCP)
+
+- `name`, `platform`: Dont change this
+- `serialPort`: Serial device (RTU) or network address (TCP)
+- `uploadInterval`: How long the plugin should average metrics samples before uploading to SolarCharge API
 - `inverterProfile`: `"auto"` (detect from config brand) or profile name (e.g., `"Growatt_SPH"`)
 - `plantId`, `serialNum`: SolarCharge API credentials for syncing buy/sell times and uploading metrics
-- `brand`: Inverter manufacturer name (used for auto-detection)
-- `baseUrl`: SolarCharge API endpoint (default: `https://groshapp.com/test`)
 
 ## HomeKit Integration
 
@@ -59,8 +61,8 @@ The plugin creates two sophisticated accessories with hierarchical HomeKit UI:
 - **Primary Service**: LightSensor ("Inverter Production")
   - Displays current solar production as Lux value (1W = 1 Lux)
   - Real-time updates every 5 seconds
-
-- **Control Switch**: "Inverter Connected"
+  - Tap to open control switch
+- **Control Switch**: Switch "Inverter Connected"
   - Toggle ON to enable grid charging (buy mode)
   - When ON, fetches user-defined buy times from SolarCharge app
   - Auto-toggles OFF if app has buy times disabled (00:00-00:00)
@@ -68,15 +70,15 @@ The plugin creates two sophisticated accessories with hierarchical HomeKit UI:
 
 ### Accessory 2: Solar Battery
 
-- **Primary Service**: Switch ("Battery Status")
+- **Primary Service**: TemperatureSensor ("Battery Level")
+  - Displays battery percentage as temperature value (0°–100°C = 0%–100% SoC)
+  - Real-time updates every 5 seconds
+  - Tap to open control switch
+- **Control Switch**: Switch ("Battery Status")
   - Toggle ON to enable grid discharging (sell mode)
   - When ON, fetches user-defined sell times from SolarCharge app
   - Auto-toggles OFF if app has sell times disabled (00:00-00:00)
   - Updates inverter settings via Modbus register write
-  - Creates large tile on Home app for easy access
-
-- **Secondary Service**: TemperatureSensor ("Battery Level")
-  - Displays battery percentage as temperature value (0°–100°C = 0%–100% SoC)
 
 ## Architecture: JSON-Based Profile System
 
@@ -216,10 +218,7 @@ Check protocol for time representation:
 
 ### Step 4: Test and Restart
 
-```bash
-npm run build
-homebridge -D
-```
+See Development section
 
 Plugin will auto-detect the new profile by matching `manufacturer` field. Check logs for confirmation.
 

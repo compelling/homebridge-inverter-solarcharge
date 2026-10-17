@@ -462,6 +462,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         .onSet(async (value: unknown) => {
           const shouldEnable = value as boolean; // what user toggled to (true=ON, false=OFF)
           // Fetch user-defined sell times from SolarCharge API
+          let startHour = 9; // Fallback: standard morning selling start
+          let stopHour = 12; // Fallback: standard morning selling end
           let shouldSell = shouldEnable; // what we actually want to set on the inverter (may be overridden if app has disabled sell times)
           if (shouldEnable) {
             const apiSettings =
@@ -474,6 +476,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
                 );
                 shouldSell = false;
               } else {
+                startHour = apiSettings.sellFrom;
+                stopHour = apiSettings.sellTo;
                 this.log.info(
                   `✓ ACCESSORY 2 ON: Using user-defined sell times from API -> ${apiSettings.sellFrom}:00-${apiSettings.sellTo}:00`,
                 );
@@ -485,6 +489,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           const success = await this.activeProfile?.setDischargeSettings(
             this.modbusClient,
             shouldSell,
+            startHour,
+            stopHour,
           ) ?? false;
 
           if (success) {

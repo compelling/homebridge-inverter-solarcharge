@@ -108,7 +108,7 @@ export class ProfileLoader {
  */
 export class DynamicInverterProfile extends InverterProfile {
   readonly config: InverterProfileConfig;
-  readonly killSwitch = true; // during developement only log updates but do not perform actual Modbus writes
+  readonly killSwitch = false; // during developement only log updates but do not perform actual Modbus writes
 
   constructor(config: InverterProfileConfig, log: Logging) {
     super(log);
@@ -326,12 +326,15 @@ export class DynamicInverterProfile extends InverterProfile {
         this.config.encoding.timeFormat,
       );
 
-      const registersToWrite: Array<[number, number]> = [
-        [cm.dischargeStartTimeRegister, startValue],
-        [cm.dischargeStopTimeRegister, stopValue],
-      ];
+      // Disabling only clears the enable flag so the stored schedule is preserved
+      const registersToWrite: Array<[number, number]> = enable
+        ? [
+            [cm.dischargeStartTimeRegister, startValue],
+            [cm.dischargeStopTimeRegister, stopValue],
+          ]
+        : [];
 
-      if (cm.dischargeStopSocRegister && minimumSoC !== undefined) {
+      if (enable && cm.dischargeStopSocRegister && minimumSoC !== undefined) {
         registersToWrite.push([cm.dischargeStopSocRegister, minimumSoC]);
       }
 
@@ -344,7 +347,7 @@ export class DynamicInverterProfile extends InverterProfile {
       }
 
       this.log.info(
-        `[${this.config.name}] Discharge ${enable ? 'ENABLED' : 'DISABLED'} (${startHour}:00-${stopHour}:00)`,
+        `[${this.config.name}] Discharge ${enable ? `ENABLED (${startHour}:00-${stopHour}:00)` : 'DISABLED (schedule unchanged)'}`,
       );
       return true;
     } catch (error) {
@@ -361,7 +364,7 @@ export class DynamicInverterProfile extends InverterProfile {
     enable: boolean,
     startHour = 2,
     stopHour = 6,
-    stopSoC = 100,
+    stopSoC?: number,
   ): Promise<boolean> {
     try {
       if (this.killSwitch) {
@@ -392,13 +395,32 @@ export class DynamicInverterProfile extends InverterProfile {
         this.config.encoding.timeFormat,
       );
 
-      const registersToWrite: Array<[number, number]> = [
-        [cm.chargeStartTimeRegister, startValue],
-        [cm.chargeStopTimeRegister, stopValue],
-      ];
+      // Disabling only clears the enable flag so the stored schedule is preserved
+      const registersToWrite: Array<[number, number]> = enable
+        ? [
+            [cm.chargeStartTimeRegister, startValue],
+            [cm.chargeStopTimeRegister, stopValue],
+          ]
+        : [];
 
-      if (cm.chargeStopSocRegister && stopSoC !== undefined) {
-        registersToWrite.push([cm.chargeStopSocRegister, stopSoC]);
+      if (enable && cm.chargeStopSocRegister) {
+        let socToWrite = stopSoC;
+        if (socToWrite === undefined) {
+          // Keep the inverter's own stop-SoC unless it is unset/invalid (an empty one makes charging stop at once)
+          const current =
+            (await modbusClient.readHoldingRegisters(cm.chargeStopSocRegister, 1))
+              .data[0] ?? 0;
+          if (current < 1 || current > 100) {
+            socToWrite = 100;
+          }
+        }
+        if (socToWrite !== undefined) {
+          registersToWrite.push([cm.chargeStopSocRegister, socToWrite]);
+        }
+      }
+
+      if (cm.chargeGridEnableRegister) {
+        registersToWrite.push([cm.chargeGridEnableRegister, enable ? 1 : 0]);
       }
 
       if (cm.chargeEnableRegister) {
@@ -407,10 +429,24 @@ export class DynamicInverterProfile extends InverterProfile {
 
       for (const [register, value] of registersToWrite) {
         await modbusClient.writeRegister(register, value);
+        let readBack =
+          (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
+        if (readBack !== value) {
+          // The inverter applies some registers slightly late, so re-check once
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          readBack =
+            (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
+        }
+        const message = `[${this.config.name}] charge write reg ${register} = ${value}, read back ${readBack}`;
+        if (readBack !== value) {
+          this.log.warn(`${message} (MISMATCH: inverter did not accept the value)`);
+        } else if (this.debugLogging) {
+          this.log.info(message);
+        }
       }
 
       this.log.info(
-        `[${this.config.name}] Charge ${enable ? 'ENABLED' : 'DISABLED'} (${startHour}:00-${stopHour}:00, stop at ${stopSoC}%)`,
+        `[${this.config.name}] Charge ${enable ? `ENABLED (${startHour}:00-${stopHour}:00${stopSoC !== undefined ? `, stop at ${stopSoC}%` : ''})` : 'DISABLED (schedule unchanged)'}`,
       );
       return true;
     } catch (error) {

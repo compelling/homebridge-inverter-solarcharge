@@ -66,6 +66,7 @@ export interface ControlMap {
   chargeStartTimeRegister?: number;   // Start time for charge window
   chargeStopTimeRegister?: number;    // End time for charge window
   chargeEnableRegister?: number;      // Bit/flag to enable charge schedule
+  chargeGridEnableRegister?: number;  // Optional extra flag that must also be set to allow charging from the grid
 }
 
 /**

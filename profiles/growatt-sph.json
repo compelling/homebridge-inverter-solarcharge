@@ -32,11 +32,12 @@
     "dischargeStartTimeRegister": 1080,
     "dischargeStopTimeRegister": 1081,
     "dischargeEnableRegister": 1082,
-    "chargeRateRegister": 1068,
-    "chargeStopSocRegister": 1069,
-    "chargeStartTimeRegister": 1075,
-    "chargeStopTimeRegister": 1076,
-    "chargeEnableRegister": 1077
+    "chargeRateRegister": 1090,
+    "chargeStopSocRegister": 1091,
+    "chargeStartTimeRegister": 1100,
+    "chargeStopTimeRegister": 1101,
+    "chargeEnableRegister": 1102,
+    "chargeGridEnableRegister": 1092
   },
   "encoding": {
     "timeFormat": "PackedBytes",
