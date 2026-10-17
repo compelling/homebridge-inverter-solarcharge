@@ -342,6 +342,19 @@ export class DynamicInverterProfile extends InverterProfile {
         registersToWrite.push([cm.dischargeEnableRegister, enable ? 1 : 0]);
       }
 
+      if (!enable && cm.dischargeEnableRegister) {
+        // Writing 0 over an already-0 enable flag makes the inverter copy the other schedule's window
+        const current =
+          (await modbusClient.readHoldingRegisters(cm.dischargeEnableRegister, 1))
+            .data[0] ?? 0;
+        if (current === 0) {
+          this.log.info(
+            `[${this.config.name}] Discharge already disabled, nothing written`,
+          );
+          return true;
+        }
+      }
+
       for (const [register, value] of registersToWrite) {
         await modbusClient.writeRegister(register, value);
       }
@@ -427,16 +440,28 @@ export class DynamicInverterProfile extends InverterProfile {
         registersToWrite.push([cm.chargeEnableRegister, enable ? 1 : 0]);
       }
 
+      if (!enable && cm.chargeEnableRegister) {
+        // Writing 0 over an already-0 enable flag makes the inverter copy the other schedule's window
+        const current =
+          (await modbusClient.readHoldingRegisters(cm.chargeEnableRegister, 1))
+            .data[0] ?? 0;
+        if (current === 0) {
+          this.log.info(
+            `[${this.config.name}] Charge already disabled, nothing written`,
+          );
+          return true;
+        }
+      }
+
       for (const [register, value] of registersToWrite) {
         await modbusClient.writeRegister(register, value);
-        let readBack =
+      }
+
+      // The inverter applies writes slightly late, so verify once after all writes
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      for (const [register, value] of registersToWrite) {
+        const readBack =
           (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
-        if (readBack !== value) {
-          // The inverter applies some registers slightly late, so re-check once
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          readBack =
-            (await modbusClient.readHoldingRegisters(register, 1)).data[0] ?? 0;
-        }
         const message = `[${this.config.name}] charge write reg ${register} = ${value}, read back ${readBack}`;
         if (readBack !== value) {
           this.log.warn(`${message} (MISMATCH: inverter did not accept the value)`);

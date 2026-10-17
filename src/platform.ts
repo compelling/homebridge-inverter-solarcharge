@@ -88,7 +88,32 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   // Cast the imported constructor to an unknown constructable object that outputs our interface.
   // This satisfies both the compiler and the strict 'no-explicit-any' ESLint rule.
   private readonly modbusClient =
-    new (ModbusRTU as unknown as new () => CustomModbusClient)();
+    InverterSolarChargePlatform.serialize(
+      new (ModbusRTU as unknown as new () => CustomModbusClient)(),
+    );
+
+  // Run all register reads/writes one at a time so polls and toggles never overlap on the RTU line
+  private static serialize(client: CustomModbusClient): CustomModbusClient {
+    let queue: Promise<unknown> = Promise.resolve();
+    const target = client as unknown as Record<string, unknown>;
+    for (const name of [
+      'readInputRegisters',
+      'readHoldingRegisters',
+      'writeRegister',
+      'writeRegisters',
+    ]) {
+      const original = target[name];
+      if (typeof original !== 'function') {
+        continue;
+      }
+      target[name] = (...args: unknown[]) => {
+        const run = queue.then(() => original.apply(client, args));
+        queue = run.catch(() => undefined);
+        return run;
+      };
+    }
+    return client;
+  }
 
   private readonly plantId!: string;
   private readonly serialNum!: string;
@@ -355,16 +380,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
                 '✓ ACCESSORY 1 toggled to OFF (app settings disabled buy)',
               );
             } else if (!shouldEnable) {
-              // User explicitly turned OFF - read inverter state and sync
-              const sellState =
-                await this.activeProfile?.readDischargeSettings(
-                  this.modbusClient,
-                  true,
-                );
-              if (sellState) {
+              // User explicitly turned OFF buy: zero only buy, keep the app's sell hours
+              const current =
+                await this.solarChargeUploader.getInverterSettings();
+              if (current) {
                 await this.setInverterSettings({
-                  sellFrom: sellState.enable ? sellState.startHour : 0,
-                  sellTo: sellState.enable ? sellState.stopHour : 0,
+                  sellFrom: current.sellFrom,
+                  sellTo: current.sellTo,
                   buyFrom: 0,
                   buyTo: 0,
                 });
@@ -385,12 +407,16 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
           // If we auto-toggled OFF due to disabled app settings, update the UI
           if (shouldEnable && !shouldBuy) {
-            setTimeout(() => {
-              this.solarSwitchService?.updateCharacteristic(
-                this.api.hap.Characteristic.On,
-                false,
-              );
-            }, 500);
+            // Push the OFF state after the write response has been delivered, and once more
+            // in case the Home app ignored the first update
+            for (const delayMs of [1500, 4000]) {
+              setTimeout(() => {
+                this.solarSwitchService?.updateCharacteristic(
+                  this.api.hap.Characteristic.On,
+                  false,
+                );
+              }, delayMs);
+            }
           }
         });
     }
@@ -500,18 +526,15 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
                 '✓ ACCESSORY 2 toggled to OFF (app settings disabled sell)',
               );
             } else if (!shouldEnable) {
-              // User explicitly turned OFF - read inverter state and sync
-              const buyState =
-                await this.activeProfile?.readChargeSettings(
-                  this.modbusClient,
-                  true,
-                );
-              if (buyState) {
+              // User explicitly turned OFF sell: zero only sell, keep the app's buy hours
+              const current =
+                await this.solarChargeUploader.getInverterSettings();
+              if (current) {
                 await this.setInverterSettings({
                   sellFrom: 0,
                   sellTo: 0,
-                  buyFrom: buyState.enable ? buyState.startHour : 0,
-                  buyTo: buyState.enable ? buyState.stopHour : 0,
+                  buyFrom: current.buyFrom,
+                  buyTo: current.buyTo,
                 });
               }
             }
@@ -529,12 +552,16 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           }
           // If we auto-toggled OFF due to disabled app settings, update the UI
           if (shouldEnable && !shouldSell) {
-            setTimeout(() => {
-              this.batterySwitchService?.updateCharacteristic(
-                this.api.hap.Characteristic.On,
-                false,
-              );
-            }, 500);
+            // Push the OFF state after the write response has been delivered, and once more
+            // in case the Home app ignored the first update
+            for (const delayMs of [1500, 4000]) {
+              setTimeout(() => {
+                this.batterySwitchService?.updateCharacteristic(
+                  this.api.hap.Characteristic.On,
+                  false,
+                );
+              }, delayMs);
+            }
           }
         });
     }
