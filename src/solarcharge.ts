@@ -103,7 +103,7 @@ export class SolarChargeUploader {
   /**
  * Uploads current SPH settings to the SolarCharge API, mapping 0 to "00" implicitly.
  */
-  public async setInverterSettings(settings: InverterSettingsPayload): Promise<void> {
+  public async setInverterSettings(settings: InverterSettingsPayload, inverterProfile?: string): Promise<void> {
     try {
     // Formats the numbers as 2-digit strings. If the number is 0, it automatically becomes "00"
       const sellFromStr: string = String(settings.sellFrom).padStart(2, '0');
@@ -123,6 +123,7 @@ export class SolarChargeUploader {
             plantId: this.plantId,
             serialNum: this.serialNum,
             branding: 'sc',
+            inverterProfile,
             sellFrom: sellFromStr,
             sellTo: sellToStr,
             buyFrom: buyFromStr,

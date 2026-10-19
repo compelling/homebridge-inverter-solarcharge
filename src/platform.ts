@@ -138,6 +138,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private lastBuying = false;
   private lastSending = false;
   private retryCount = 0;
+  private syncing = false;
+  private syncTimer?: NodeJS.Timeout;
   private pollingTimer?: NodeJS.Timeout;
   private uploadTimer?: NodeJS.Timeout;
   private dataBuffer!: DataBuffer;
@@ -343,62 +345,32 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.solarSwitchService
         .getCharacteristic(this.api.hap.Characteristic.On)
         .onSet(async (value: unknown) => {
-          const shouldEnable = value as boolean; // what user toggled to (true=ON, false=OFF)
-          // Fetch user-defined buy times from SolarCharge API
-          let startHour = 2; // Fallback: Standard night charging start (02:00)
-          let stopHour = 6; // Fallback: Standard night charging end (06:00)
-          let shouldBuy = shouldEnable; // what we actually want to set on the inverter (may be overridden if app has disabled buy times)
-          if (shouldEnable) {
-            const apiSettings =
-              await this.solarChargeUploader.getInverterSettings();
-            if (apiSettings) {
-              startHour = apiSettings.buyFrom;
-              stopHour = apiSettings.buyTo;
-              // If app has disabled buy times (both are 0), auto-toggle OFF
-              if (startHour === 0 && stopHour === 0) {
-                this.log.warn(
-                  '⚠️ ACCESSORY 1: App settings show buy is DISABLED (00:00-00:00). Auto-toggling OFF.',
-                );
-                shouldBuy = false;
-              } else {
-                this.log.info(
-                  `✓ ACCESSORY 1 ON: Using user-defined buy times from API -> ${startHour}:00-${stopHour}:00`,
-                );
-              }
-            } else {
-              this.log.warn(
-                '⚠️ ACCESSORY 1 ON: Could not fetch API settings, using fallback times (02:00-06:00)',
-              );
-            }
+          const shouldEnable = value as boolean; // forced override from the Home app
+          let startHour = 2; // Fallback: standard night charging start
+          let stopHour = 6; // Fallback: standard night charging end
+          const current = await this.solarChargeUploader.getInverterSettings();
+          if (shouldEnable && current && (current.buyFrom !== 0 || current.buyTo !== 0)) {
+            startHour = current.buyFrom;
+            stopHour = current.buyTo;
           }
           const success = await this.activeProfile?.setChargeSettings(
             this.modbusClient,
-            shouldBuy,
+            shouldEnable,
             startHour,
             stopHour,
           ) ?? false;
 
           if (success) {
-            // Only send settings back when turning OFF, not when turning ON
-            // (we already fetched the app settings, so no need to echo them back)
-            if (!shouldBuy && shouldEnable) {
-              // User tried to turn ON but app had it disabled, notify sync
-              this.log.info(
-                '✓ ACCESSORY 1 toggled to OFF (app settings disabled buy)',
-              );
-            } else if (!shouldEnable) {
-              // User explicitly turned OFF buy: zero only buy, keep the app's sell hours
-              const current =
-                await this.solarChargeUploader.getInverterSettings();
-              if (current) {
-                await this.setInverterSettings({
-                  sellFrom: current.sellFrom,
-                  sellTo: current.sellTo,
-                  buyFrom: 0,
-                  buyTo: 0,
-                });
-              }
-            }
+            this.lastBuying = shouldEnable;
+            this.log.info(
+              `✓ ACCESSORY 1 forced ${shouldEnable ? `ON (${startHour}:00-${stopHour}:00)` : 'OFF'}; posting to SolarCharge`,
+            );
+            await this.setInverterSettings({
+              sellFrom: current?.sellFrom ?? 0,
+              sellTo: current?.sellTo ?? 0,
+              buyFrom: shouldEnable ? startHour : 0,
+              buyTo: shouldEnable ? stopHour : 0,
+            });
           } else {
             // Revert the toggle on failure
             setTimeout(() => {
@@ -410,20 +382,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
             throw new this.api.hap.HapStatusError(
               this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
             );
-          }
-
-          // If we auto-toggled OFF due to disabled app settings, update the UI
-          if (shouldEnable && !shouldBuy) {
-            // Push the OFF state after the write response has been delivered, and once more
-            // in case the Home app ignored the first update
-            for (const delayMs of [1500, 4000]) {
-              setTimeout(() => {
-                this.solarSwitchService?.updateCharacteristic(
-                  this.api.hap.Characteristic.On,
-                  false,
-                );
-              }, delayMs);
-            }
           }
         });
     }
@@ -493,58 +451,32 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.batterySwitchService
         .getCharacteristic(this.api.hap.Characteristic.On)
         .onSet(async (value: unknown) => {
-          const shouldEnable = value as boolean; // what user toggled to (true=ON, false=OFF)
-          // Fetch user-defined sell times from SolarCharge API
+          const shouldEnable = value as boolean; // forced override from the Home app
           let startHour = 9; // Fallback: standard morning selling start
           let stopHour = 12; // Fallback: standard morning selling end
-          let shouldSell = shouldEnable; // what we actually want to set on the inverter (may be overridden if app has disabled sell times)
-          if (shouldEnable) {
-            const apiSettings =
-              await this.solarChargeUploader.getInverterSettings();
-            if (apiSettings) {
-              // If app has disabled sell times (both are 0), auto-toggle OFF
-              if (apiSettings.sellFrom === 0 && apiSettings.sellTo === 0) {
-                this.log.warn(
-                  '⚠️ ACCESSORY 2: App settings show sell is DISABLED (00:00-00:00). Auto-toggling OFF.',
-                );
-                shouldSell = false;
-              } else {
-                startHour = apiSettings.sellFrom;
-                stopHour = apiSettings.sellTo;
-                this.log.info(
-                  `✓ ACCESSORY 2 ON: Using user-defined sell times from API -> ${apiSettings.sellFrom}:00-${apiSettings.sellTo}:00`,
-                );
-              }
-            } else {
-              this.log.warn('⚠️ ACCESSORY 2 ON: Could not fetch API settings');
-            }
+          const current = await this.solarChargeUploader.getInverterSettings();
+          if (shouldEnable && current && (current.sellFrom !== 0 || current.sellTo !== 0)) {
+            startHour = current.sellFrom;
+            stopHour = current.sellTo;
           }
           const success = await this.activeProfile?.setDischargeSettings(
             this.modbusClient,
-            shouldSell,
+            shouldEnable,
             startHour,
             stopHour,
           ) ?? false;
 
           if (success) {
-            // Only send settings back when turning OFF, not when turning ON
-            if (!shouldSell && shouldEnable) {
-              this.log.info(
-                '✓ ACCESSORY 2 toggled to OFF (app settings disabled sell)',
-              );
-            } else if (!shouldEnable) {
-              // User explicitly turned OFF sell: zero only sell, keep the app's buy hours
-              const current =
-                await this.solarChargeUploader.getInverterSettings();
-              if (current) {
-                await this.setInverterSettings({
-                  sellFrom: 0,
-                  sellTo: 0,
-                  buyFrom: current.buyFrom,
-                  buyTo: current.buyTo,
-                });
-              }
-            }
+            this.lastSending = shouldEnable;
+            this.log.info(
+              `✓ ACCESSORY 2 forced ${shouldEnable ? `ON (${startHour}:00-${stopHour}:00)` : 'OFF'}; posting to SolarCharge`,
+            );
+            await this.setInverterSettings({
+              sellFrom: shouldEnable ? startHour : 0,
+              sellTo: shouldEnable ? stopHour : 0,
+              buyFrom: current?.buyFrom ?? 0,
+              buyTo: current?.buyTo ?? 0,
+            });
           } else {
             // Revert the toggle on failure
             setTimeout(() => {
@@ -556,19 +488,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
             throw new this.api.hap.HapStatusError(
               this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
             );
-          }
-          // If we auto-toggled OFF due to disabled app settings, update the UI
-          if (shouldEnable && !shouldSell) {
-            // Push the OFF state after the write response has been delivered, and once more
-            // in case the Home app ignored the first update
-            for (const delayMs of [1500, 4000]) {
-              setTimeout(() => {
-                this.batterySwitchService?.updateCharacteristic(
-                  this.api.hap.Characteristic.On,
-                  false,
-                );
-              }, delayMs);
-            }
           }
         });
     }
@@ -669,6 +588,13 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         this.pollInterval,
       );
 
+      // Sync app settings to the inverter every 5 minutes
+      await this.syncSettingsFromApp();
+      this.syncTimer = setInterval(
+        () => this.syncSettingsFromApp(),
+        5 * 60 * 1000,
+      );
+
       // Start the upload aggregation timer (configurable interval)
       this.uploadTimer = setInterval(
         () => this.uploadAggregatedData(),
@@ -702,6 +628,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     if (this.pollingTimer) {
       clearInterval(this.pollingTimer);
       this.pollingTimer = undefined;
+    }
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = undefined;
     }
     if (this.uploadTimer) {
       clearInterval(this.uploadTimer);
@@ -961,6 +891,71 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     buyFrom: number;
     buyTo: number;
   }): Promise<void> {
-    await this.solarChargeUploader.setInverterSettings(settings);
+    await this.solarChargeUploader.setInverterSettings(
+      settings,
+      this.activeProfile?.config.name ?? this.inverterProfileName,
+    );
+  }
+
+  /**
+   * Pulls the SolarCharge app settings and writes them to the inverter
+   * when they differ from what was last read from the inverter.
+   */
+  private async syncSettingsFromApp(): Promise<void> {
+    if (this.syncing || !this.activeProfile) {
+      return;
+    }
+    this.syncing = true;
+    try {
+      const api = await this.solarChargeUploader.getInverterSettings();
+      if (!api) {
+        return;
+      }
+      const profile = this.activeProfile;
+
+      const apply = async (
+        kind: 'buy' | 'sell',
+        from: number,
+        to: number,
+      ): Promise<void> => {
+        const wantEnable = from !== 0 || to !== 0;
+        const current = kind === 'buy'
+          ? await profile.readChargeSettings(this.modbusClient, true)
+          : await profile.readDischargeSettings(this.modbusClient, true);
+        if (!current) {
+          return;
+        }
+        const differs = current.enable !== wantEnable
+          || (wantEnable && (current.startHour !== from || current.stopHour !== to));
+        if (!differs) {
+          return;
+        }
+        this.log.info(
+          `🔄 App ${kind} settings changed -> ${wantEnable ? `${from}:00-${to}:00` : 'OFF'}; writing to inverter`,
+        );
+        const ok = kind === 'buy'
+          ? await profile.setChargeSettings(this.modbusClient, wantEnable, from, to)
+          : await profile.setDischargeSettings(this.modbusClient, wantEnable, from, to);
+        if (!ok) {
+          this.log.error(`Failed to write ${kind} settings from app to inverter`);
+          return;
+        }
+        if (kind === 'buy') {
+          this.lastBuying = wantEnable;
+          this.solarSwitchService?.updateCharacteristic(this.api.hap.Characteristic.On, wantEnable);
+        } else {
+          this.lastSending = wantEnable;
+          this.batterySwitchService?.updateCharacteristic(this.api.hap.Characteristic.On, wantEnable);
+        }
+      };
+
+      await apply('buy', api.buyFrom, api.buyTo);
+      await apply('sell', api.sellFrom, api.sellTo);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log.error(`Error syncing app settings to inverter: ${msg}`);
+    } finally {
+      this.syncing = false;
+    }
   }
 }
