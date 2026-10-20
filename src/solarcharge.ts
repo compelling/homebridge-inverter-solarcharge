@@ -18,6 +18,15 @@ export interface InverterSettingsPayload {
   buyTo: number;    // E.g. 6  (or 0 if deactivated)
 }
 
+export interface ChargerSettingsPayload {
+  from: number; // E.g. 17 (or 0 if deactivated)
+  to: number;   // E.g. 21 (or 0 if deactivated)
+  amps: number;  // E.g. 6  (or 0 if deactivated)
+  voltage: number;  // E.g. 230 (or 690 is three phased charger)
+  maxAmps?: number; // Charger max current set in the SC app (falls back to 16)
+  profileName?: string; // Detected or selected charger profile, e.g. "Alfen_Eve"
+}
+
 /**
  * SolarCharge API client for uploading aggregated inverter telemetry.
  * Handles formatted requests to the SolarCharge backend service.
@@ -29,6 +38,7 @@ export class SolarChargeUploader {
     private readonly log: Logging,
     private readonly baseUrl: string = 'https://groshapp.com/test', // Default test server
     // private readonly baseUrl: string = 'https://compellingsoftware.com/edge', // Production server
+    private readonly chargerId?: string, // EV charger ID (chargers use chargerId, not plantId)
   ) {}
 
   /**
@@ -103,7 +113,7 @@ export class SolarChargeUploader {
   /**
  * Uploads current SPH settings to the SolarCharge API, mapping 0 to "00" implicitly.
  */
-  public async setInverterSettings(settings: InverterSettingsPayload, inverterProfile?: string): Promise<void> {
+  public async setInverterSettings(settings: InverterSettingsPayload, profileName?: string): Promise<void> {
     try {
     // Formats the numbers as 2-digit strings. If the number is 0, it automatically becomes "00"
       const sellFromStr: string = String(settings.sellFrom).padStart(2, '0');
@@ -123,7 +133,7 @@ export class SolarChargeUploader {
             plantId: this.plantId,
             serialNum: this.serialNum,
             branding: 'sc',
-            inverterProfile,
+            profileName,
             sellFrom: sellFromStr,
             sellTo: sellToStr,
             buyFrom: buyFromStr,
@@ -144,6 +154,104 @@ export class SolarChargeUploader {
       this.log.error(
         `Could not upload inverter settings to SolarCharge API: ${errorMsg}`,
       );
+    }
+  }
+
+  /**
+   * Fetches the current EV charger settings from the SolarCharge API backend.
+   * Values are "00"/0 when deactivated.
+   */
+  public async getChargerSettings(): Promise<ChargerSettingsPayload | null> {
+    try {
+      const params = {
+        chargerId: this.chargerId ?? '',
+        serialNum: this.serialNum,
+        branding: 'sc',
+      };
+      const url = `${this.baseUrl}/chargersettings?${new URLSearchParams(params).toString()}`;
+      this.log.debug(`Fetching charger settings from SolarCharge API: ${url}`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        this.log.error(`SolarCharge API error fetching charger settings: ${response.status} ${response.statusText}`);
+        return null;
+      }
+
+      const data = await response.json() as {
+        from?: string | number;
+        to?: string | number;
+        amps?: string | number;
+        voltage?: string | number;
+        maxAmps?: string | number;
+        profileName?: string;
+      };
+
+      if (!data) {
+        this.log.error('SolarCharge API returned an empty or invalid charger settings response.');
+        return null;
+      }
+
+      const toInt = (v: string | number | undefined): number => {
+        const n = v === undefined ? 0 : parseInt(v.toString(), 10);
+        return Number.isNaN(n) ? 0 : n;
+      };
+
+      const settings: ChargerSettingsPayload = {
+        from: toInt(data.from),
+        to: toInt(data.to),
+        amps: toInt(data.amps),
+        voltage: toInt(data.voltage) || 230,
+        maxAmps: toInt(data.maxAmps) || undefined,
+        profileName: data.profileName || undefined,
+      };
+      this.log.info(`[API Get] Charger settings -> ${settings.from}-${settings.to} @ ${settings.amps} A, ${settings.voltage} V`);
+      return settings;
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.log.error(`Could not fetch charger settings from SolarCharge API: ${errorMsg}`);
+      return null;
+    }
+  }
+
+  /**
+   * Uploads current EV charger settings to the SolarCharge API, mapping 0 to "00".
+   */
+  public async setChargerSettings(settings: ChargerSettingsPayload): Promise<void> {
+    try {
+      const fromStr = String(settings.from).padStart(2, '0');
+      const toStr = String(settings.to).padStart(2, '0');
+      const ampsStr = String(settings.amps).padStart(2, '0');
+      const response = await fetch(`${this.baseUrl}/chargersettings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          chargerId: this.chargerId ?? '',
+          serialNum: this.serialNum,
+          branding: 'sc',
+          profileName: settings.profileName,
+          from: fromStr,
+          to: toStr,
+          amps: ampsStr,
+          voltage: settings.voltage,
+        }),
+      });
+
+      if (!response.ok) {
+        this.log.error(`SolarCharge API error updating charger settings: ${response.status} ${response.statusText}`);
+      } else {
+        this.log.debug(`Successfully uploaded charger settings -> ${fromStr}-${toStr} @ ${ampsStr} A, ${settings.voltage} V`);
+      }
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.log.error(`Could not upload charger settings to SolarCharge API: ${errorMsg}`);
     }
   }
 

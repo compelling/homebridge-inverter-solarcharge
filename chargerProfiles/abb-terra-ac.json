@@ -1,0 +1,27 @@
+{
+  "name": "ABB_TerraAC",
+  "manufacturer": "ABB",
+  "model": "Terra AC",
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 502,
+    "modbusSlaveId": 1,
+    "supportsRtu": true
+  },
+  "control": {
+    "currentLimitRegister": 16640,
+    "currentLimitRegisterHex": "0x4100",
+    "dataType": "uint16",
+    "scalingFactor": 0.1,
+    "scalingNote": "0.1 or 0.01 depending on firmware; verify against the Modbus manual for your FW version",
+    "writeFunction": "writeSingleRegister"
+  },
+  "encoding": {
+    "endianness": "BigEndian"
+  },
+  "source": "https://library.e.abb.com/public/982c2befa2734d259e66d76fa4a7ba77/ABB_Terra_AC_Charger_ModbusCommunication_v1.11.pdf",
+  "detection": {
+    "type": "modbus",
+    "probeRegister": 16640
+  }
+}

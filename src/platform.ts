@@ -11,7 +11,12 @@ import ModbusRTU from 'modbus-serial';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { SolarChargeUploader } from './solarcharge.js';
 import { InverterProfileFactory } from './profile-loader.js';
+import { ChargerController } from './charger-controller.js';
+import { detectCharger, parseHostPort } from './charger-detect.js';
 import type { InverterProfile } from './inverter-profile.js';
+
+// Interval for averaging metrics before uploading to the SolarCharge API
+const UPLOAD_INTERVAL_MS = 5 * 60 * 1000;
 
 // Define a local interface for the Modbus client methods we use.
 // This bypasses the legacy CommonJS namespace mapping bugs in strict TypeScript environments.
@@ -144,6 +149,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private uploadTimer?: NodeJS.Timeout;
   private dataBuffer!: DataBuffer;
   private solarChargeUploader!: SolarChargeUploader;
+  private chargerController?: ChargerController;
+  private chargerRetryTimer?: NodeJS.Timeout;
   private accessories: PlatformAccessory[] = []; // Track all cached and created accessories
   private inverterAccessory?: PlatformAccessory;
   private batteryLevelAccessory?: PlatformAccessory;
@@ -181,12 +188,14 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     // Fixed polling interval: always 5 seconds for HomeKit responsiveness
     this.pollInterval = 5000;
     // Upload aggregation interval: configurable, default 300s (5 minutes)
-    this.uploadInterval = Math.max(config.uploadInterval || 300, 60) * 1000;
+    this.uploadInterval = UPLOAD_INTERVAL_MS;
     this.dataBuffer = new DataBuffer();
     this.solarChargeUploader = new SolarChargeUploader(
       this.plantId,
       this.serialNum,
       this.log,
+      undefined,
+      config.chargerId as string | undefined,
     );
 
     this.log.info(
@@ -194,8 +203,103 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     );
 
     this.api.on('didFinishLaunching', () => {
+      void this.startCharger();
       this.connectAndStartPolling();
     });
+    this.api.on('shutdown', () => {
+      clearTimeout(this.chargerRetryTimer);
+      this.chargerController?.stop();
+    });
+  }
+
+  // ACCESSORY 3: "EV Charger"
+  //  ├─ 💡 LightSensor → "Charger Current" (Lux on Home screen equals Watts = amps × voltage)
+  //  └─ 🔘 Switch → "EV Charging" (ON means charging now; toggling ON forces max current, OFF returns to the schedule)
+  private setupChargerAccessory(profileName: string): void {
+    const uuid = this.api.hap.uuid.generate(`ev-charger-${this.config.chargerId}`);
+    let accessory = this.accessories.find((acc: PlatformAccessory) => acc.UUID === uuid);
+    if (!accessory) {
+      this.log.info('Registering EV Charger accessory...');
+      accessory = new this.api.platformAccessory('EV Charger', uuid);
+      accessory.category = this.api.hap.Categories.SENSOR;
+      accessory.addService(this.api.hap.Service.LightSensor, 'Charger Current');
+      accessory.addService(this.api.hap.Service.Switch, 'EV Charging');
+      this.accessories.push(accessory);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    }
+    accessory
+      .getService(this.api.hap.Service.AccessoryInformation)!
+      .setCharacteristic(this.api.hap.Characteristic.Manufacturer, 'SolarCharge')
+      .setCharacteristic(this.api.hap.Characteristic.Model, profileName);
+
+    const { Characteristic, Service } = this.api.hap;
+    const current = accessory.getService(Service.LightSensor) || accessory.addService(Service.LightSensor);
+    current.getCharacteristic(Characteristic.CurrentAmbientLightLevel).setProps({ minValue: 0 });
+    current.setCharacteristic(Characteristic.Name, 'Charger Current');
+    const toggle = accessory.getService(Service.Switch) || accessory.addService(Service.Switch);
+    toggle.setCharacteristic(Characteristic.Name, 'EV Charging').setCharacteristic(Characteristic.On, false);
+
+    toggle.getCharacteristic(Characteristic.On).onSet(async (value: unknown) => {
+      await this.chargerController?.setOverride(value as boolean);
+    });
+    if (this.chargerController) {
+      this.chargerController.onUpdate = (amps: number, watts: number) => {
+        current.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, watts);
+        toggle.updateCharacteristic(Characteristic.On, amps > 0);
+      };
+    }
+  }
+
+  /** Starts EV charger control; profile "auto" (or unset with an IP) triggers detection. */
+  private async startCharger(): Promise<void> {
+    const rawHost = this.config.chargerIpAddress as string | undefined;
+    if (!rawHost) {
+      return;
+    }
+    if (!this.config.chargerId) {
+      this.log.warn('EV charger is configured but chargerId is missing. Enter your SolarCharge Charger ID.');
+      return;
+    }
+    const { host, port } = parseHostPort(rawHost, this.config.chargerPort as number | undefined);
+    let profileName = (this.config.chargerProfile as string | undefined) || 'auto';
+
+    if (profileName === 'auto') {
+      const result = await detectCharger(host, port);
+      if (!result.reachable) {
+        this.log.warn(`EV charger auto-detection: ${host} is not reachable. Retrying in 5 minutes.`);
+        this.chargerRetryTimer = setTimeout(() => void this.startCharger(), 5 * 60 * 1000);
+        return;
+      }
+      if (result.matches.length !== 1) {
+        this.log.warn(
+          result.matches.length === 0
+            ? `EV charger auto-detection found no known charger at ${host}. Retrying in 5 minutes, or select a charger profile manually.`
+            : `EV charger auto-detection is ambiguous (${result.matches.join(', ')}). Select a charger profile manually.`,
+        );
+        if (result.matches.length === 0) {
+          this.chargerRetryTimer = setTimeout(() => void this.startCharger(), 5 * 60 * 1000);
+        }
+        return;
+      }
+      profileName = result.matches[0];
+      this.log.info(`🔍 EV charger auto-detected: ${profileName}`);
+    }
+
+    try {
+      this.chargerController = new ChargerController(
+        {
+          profileName,
+          host,
+          port,
+        },
+        this.solarChargeUploader,
+        this.log,
+      );
+      this.setupChargerAccessory(profileName);
+      this.chargerController.start();
+    } catch (error: unknown) {
+      this.log.error(error instanceof Error ? error.message : String(error));
+    }
   }
 
   // Homebridge calls this method when loading cached accessories from disk.

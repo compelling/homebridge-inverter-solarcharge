@@ -1,0 +1,24 @@
+{
+  "name": "Wallbox_Pulsar",
+  "manufacturer": "Wallbox",
+  "model": "Pulsar Plus / Max",
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 502,
+    "modbusSlaveId": 1
+  },
+  "control": {
+    "currentLimitRegister": 512,
+    "dataType": "uint16",
+    "scalingFactor": 1.0,
+    "writeFunction": "writeSingleRegister"
+  },
+  "encoding": {
+    "endianness": "BigEndian"
+  },
+  "source": "https://support.wallbox.com/wp-content/uploads/ht_kb/2024/09/EN_EMS_Installation-Guide.pdf",
+  "detection": {
+    "type": "modbus",
+    "probeRegister": 512
+  }
+}

@@ -23,14 +23,6 @@
         "placeholder": "e.g., 192.168.1.50",
         "description": "ONLY fill this out if your inverter connects over your local network. Leave blank if using a USB cable."
       },
-      "uploadInterval": {
-        "title": "Data Upload Interval (seconds)",
-        "type": "integer",
-        "default": 300,
-        "minimum": 60,
-        "maximum": 3600,
-        "description": "How often to aggregate and upload averaged data to SolarCharge API (60-3600 seconds, default 300 = 5 minutes)"
-      },
       "plantId": {
         "title": "Plant ID",
         "type": "string",
@@ -58,6 +50,28 @@
         ],
         "default": "auto",
         "description": "Set to 'auto' to detect your inverter automatically during startup. Or manually select your brand/model to skip detection."
+      },
+      "chargerProfile": {
+        "title": "EV Charger Profile (optional)",
+        "type": "string",
+        "enum": ["auto", "Wallbox_Pulsar", "Alfen_Eve", "ABB_TerraAC", "GoE_Gemini", "Tesla_TWCManager"],
+        "default": "auto",
+        "description": "Select 'auto' to detect the charger from its IP address, or pick your model. Requires the charger IP address."
+      },
+      "chargerId": {
+        "title": "EV Charger ID",
+        "type": "string",
+        "description": "Your SolarCharge Charger ID (chargers use chargerId, not plantId). Required for EV charging."
+      },
+      "chargerIpAddress": {
+        "title": "EV Charger IP Address",
+        "type": "string",
+        "placeholder": "e.g., 192.168.1.60"
+      },
+      "chargerPort": {
+        "title": "EV Charger Port (optional)",
+        "type": "integer",
+        "description": "Overrides the profile default (502 for Modbus TCP, 80 for HTTP)."
       },
       "logLevel": {
         "title": "Log Level",

@@ -1,0 +1,26 @@
+{
+  "name": "Tesla_TWCManager",
+  "manufacturer": "Tesla",
+  "model": "Wall Connector Gen 2 (via TWCManager)",
+  "connectionType": "HTTP",
+  "connection": {
+    "defaultHttpPort": 8080
+  },
+  "control": {
+    "setEndpoint": "/api/chargeNow",
+    "setMethod": "POST",
+    "setBody": "{\"chargeNowRate\": {value}, \"chargeNowDuration\": 900}",
+    "pauseEndpoint": "/api/cancelChargeNow",
+    "pauseMethod": "POST",
+    "statusEndpoint": "/api/getStatus",
+    "dataType": "int",
+    "scalingFactor": 1.0
+  },
+  "detection": {
+    "type": "http",
+    "probePath": "/api/getStatus",
+    "probeKeys": ["maxCurrent", "carsCharging"]
+  },
+  "notes": "Requires a running TWCManager instance (host = TWCManager host). chargeNowDuration (seconds) is a failsafe: if the plugin stops refreshing, TWCManager falls back to its own policy.",
+  "source": "https://github.com/ngardiner/TWCManager"
+}

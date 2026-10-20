@@ -1,0 +1,23 @@
+{
+  "name": "GoE_Gemini",
+  "manufacturer": "go-e",
+  "model": "Gemini / HOME",
+  "connectionType": "HTTP",
+  "connection": {
+    "defaultHttpPort": 80,
+    "baseUrl": "http://{host}"
+  },
+  "control": {
+    "setEndpoint": "/api/set?frc=0&amp={value}",
+    "pauseEndpoint": "/api/set?frc=1",
+    "statusEndpoint": "/api/status",
+    "dataType": "int",
+    "scalingFactor": 1.0
+  },
+  "source": "https://github.com/goecharger/go-eCharger-API-v2",
+  "detection": {
+    "type": "http",
+    "probePath": "/api/status?filter=fwv",
+    "probeKey": "fwv"
+  }
+}

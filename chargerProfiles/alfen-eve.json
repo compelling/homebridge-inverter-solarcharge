@@ -1,0 +1,26 @@
+{
+  "name": "Alfen_Eve",
+  "manufacturer": "Alfen",
+  "model": "Eve Single S-line / Pro",
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 502,
+    "modbusSlaveId": 1
+  },
+  "control": {
+    "currentLimitRegister": 1210,
+    "dataType": "float32",
+    "registerCount": 2,
+    "scalingFactor": 1.0,
+    "writeFunction": "writeMultipleRegisters"
+  },
+  "encoding": {
+    "endianness": "BigEndian"
+  },
+  "source": "https://github.com/tabnul/alfen-eve-modbus-ha",
+  "detection": {
+    "type": "modbus",
+    "probeRegister": 1210,
+    "registerCount": 2
+  }
+}
