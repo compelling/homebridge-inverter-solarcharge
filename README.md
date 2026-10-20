@@ -81,8 +81,8 @@ The plugin creates two sophisticated accessories (plus a third one when an EV ch
 
 ### Accessory 2: Solar Battery
 
-- **Primary Service**: TemperatureSensor ("Battery Level")
-  - Displays battery percentage as temperature value (0°–100°C = 0%–100% SoC)
+- **Primary Service**: LightSensor ("Battery Level")
+  - Displays battery percentage as Lux value (1 Lux = 1 % SoC)
   - Real-time updates every 5 seconds
   - Tap to open control switch
 - **Control Switch**: Switch ("Battery Status")

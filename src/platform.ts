@@ -158,7 +158,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   // HomeKit Services
   private lightSensorService?: Service;
   private solarSwitchService?: Service;
-  private temperatureSensorService?: Service;
+  private batteryLevelService?: Service;
   private batterySwitchService?: Service;
 
   constructor(
@@ -358,7 +358,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   // │  └─ 🔘 Switch → "Inverter Connected" (toggle on Home screen, ON means buy power from grid)
   // │
   // └─ 🔌 ACCESSORY 2: "Solar Battery"
-  //    ├─ 🌡️ TemperatureSensor → "Battery Level" (Degrees on Home screen equals %)
+  //    ├─ 💡 LightSensor → "Battery Level" (Lux on Home screen equals %)
   //    └─ 🔘 Switch → "Battery Status" (toggle on Home screen, ON means sell battery power to grid)
 
   private discoverDevices(): void {
@@ -490,7 +490,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         });
     }
 
-    // --- SOLAR BATTERY ACCESSORY 2 (TemperatureSensor as primary + Switch as secondary) ---
+    // --- SOLAR BATTERY ACCESSORY 2 (LightSensor as primary + Switch as secondary) ---
     let batteryLevelAccessory = this.accessories.find(
       (acc: PlatformAccessory) => acc.UUID === batteryLevelUuid,
     );
@@ -513,16 +513,17 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           this.inverterType,
         );
 
+      // LightSensor is the PRIMARY service (shows battery level on the tile).
+      // It must be added first: the Home app uses the first service for the tile.
+      batteryLevelAccessory.addService(
+        this.api.hap.Service.LightSensor,
+        'Battery Level',
+      );
+
       // Switch (secondary; shown when the tile is opened)
       batteryLevelAccessory.addService(
         this.api.hap.Service.Switch,
         'Battery Status',
-      );
-
-      // TemperatureSensor is the PRIMARY service (shows battery level on the tile)
-      batteryLevelAccessory.addService(
-        this.api.hap.Service.TemperatureSensor,
-        'Battery Level',
       );
 
       this.accessories.push(batteryLevelAccessory);
@@ -596,25 +597,23 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         });
     }
 
-    // Get or CREATE temperature sensor service
-    this.temperatureSensorService = batteryLevelAccessory.getService(
-      this.api.hap.Service.TemperatureSensor,
-    );
-    if (!this.temperatureSensorService) {
-      this.temperatureSensorService = batteryLevelAccessory.addService(
-        this.api.hap.Service.TemperatureSensor,
-        'Battery Level',
-      );
+    // Remove the legacy TemperatureSensor from accessories cached by older versions
+    const legacyTemp = batteryLevelAccessory.getService(this.api.hap.Service.TemperatureSensor);
+    if (legacyTemp) {
+      batteryLevelAccessory.removeService(legacyTemp);
     }
 
-    if (this.temperatureSensorService) {
-      // Primary service decides what the Home app shows on the tile (SoC, not switch state)
-      this.temperatureSensorService.setPrimaryService(true);
-      this.batterySwitchService?.setPrimaryService(false);
-      this.temperatureSensorService
-        .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Level')
-        .setCharacteristic(this.api.hap.Characteristic.CurrentTemperature, 50);
-    }
+    // Get or CREATE light sensor service (battery % shown as Lux, like the inverter tile)
+    this.batteryLevelService =
+      batteryLevelAccessory.getService(this.api.hap.Service.LightSensor) ||
+      batteryLevelAccessory.addService(this.api.hap.Service.LightSensor, 'Battery Level');
+
+    this.batteryLevelService
+      .getCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel)
+      .setProps({ minValue: 0 });
+    this.batteryLevelService
+      .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Level')
+      .setCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel, 50);
   }
 
   private async connectAndStartPolling(): Promise<void> {
@@ -938,10 +937,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         );
       }
 
-      if (this.temperatureSensorService) {
-        // Display battery level as temperature value (0-100 maps to battery %)
-        this.temperatureSensorService.updateCharacteristic(
-          this.api.hap.Characteristic.CurrentTemperature,
+      if (this.batteryLevelService) {
+        // Display battery level as Lux (1 % = 1 Lux)
+        this.batteryLevelService.updateCharacteristic(
+          this.api.hap.Characteristic.CurrentAmbientLightLevel,
           batterySoC,
         );
       }
