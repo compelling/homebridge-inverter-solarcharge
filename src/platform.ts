@@ -15,9 +15,6 @@ import { ChargerController } from './charger-controller.js';
 import { detectCharger, parseHostPort } from './charger-detect.js';
 import type { InverterProfile } from './inverter-profile.js';
 
-// Interval for averaging metrics before uploading to the SolarCharge API
-const UPLOAD_INTERVAL_MS = 5 * 60 * 1000;
-
 // Define a local interface for the Modbus client methods we use.
 // This bypasses the legacy CommonJS namespace mapping bugs in strict TypeScript environments.
 interface CustomModbusClient {
@@ -99,10 +96,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private readonly debugLogging: boolean;
   // Cast the imported constructor to an unknown constructable object that outputs our interface.
   // This satisfies both the compiler and the strict 'no-explicit-any' ESLint rule.
-  private readonly modbusClient =
-    InverterSolarChargePlatform.serialize(
-      new (ModbusRTU as unknown as new () => CustomModbusClient)(),
-    );
+  private readonly modbusClient = InverterSolarChargePlatform.serialize(
+    new (ModbusRTU as unknown as new () => CustomModbusClient)(),
+  );
 
   // Run all register reads/writes one at a time so polls and toggles never overlap on the RTU line
   private static serialize(client: CustomModbusClient): CustomModbusClient {
@@ -135,8 +131,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private activeProfile?: InverterProfile;
   private readonly brand!: string; // Inverter brand (e.g., 'Growatt')
   private readonly inverterType!: string; // Inverter type (e.g., 'SPH3600')
-  private readonly pollInterval: number = 5000; // Fixed polling: 5 seconds (hardcoded)
-  private readonly uploadInterval!: number; // Aggregated upload interval (1-60 minutes)
+  private readonly pollInverterDataInterval: number = 5000; // // Fixed polling interval: always 5 seconds for HomeKit responsiveness
+  private readonly uploadInverterDataInterval: number = 5 * 60 * 1000; // Fixed aggregated upload interval 300s (5 minutes)
+  private readonly pollAppSettingsInterval: number = 5 * 60 * 1000; // Fixed polling interval: always 5 minutes for settings updates
 
   private connecting = false;
   private polling = false;
@@ -144,13 +141,16 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private lastSending = false;
   private retryCount = 0;
   private syncing = false;
-  private syncTimer?: NodeJS.Timeout;
-  private pollingTimer?: NodeJS.Timeout;
-  private uploadTimer?: NodeJS.Timeout;
+
+  private pollInverterDataTimer?: NodeJS.Timeout;
+  private uploadInverterDataTimer?: NodeJS.Timeout;
+  private pollAppSettingsTimer?: NodeJS.Timeout;
+
   private dataBuffer!: DataBuffer;
   private solarChargeUploader!: SolarChargeUploader;
   private chargerController?: ChargerController;
   private chargerRetryTimer?: NodeJS.Timeout;
+  private pollChargerSettingsTimer?: NodeJS.Timeout;
   private accessories: PlatformAccessory[] = []; // Track all cached and created accessories
   private inverterAccessory?: PlatformAccessory;
   private batteryLevelAccessory?: PlatformAccessory;
@@ -185,10 +185,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     const inverterParts = inverterString.split(' ');
     this.brand = inverterParts[0]; // e.g., "Growatt"
     this.inverterType = inverterParts.slice(1).join(' '); // e.g., "SPH3600" (supports multi-word models)
-    // Fixed polling interval: always 5 seconds for HomeKit responsiveness
-    this.pollInterval = 5000;
-    // Upload aggregation interval: configurable, default 300s (5 minutes)
-    this.uploadInterval = UPLOAD_INTERVAL_MS;
     this.dataBuffer = new DataBuffer();
     this.solarChargeUploader = new SolarChargeUploader(
       this.plantId,
@@ -208,7 +204,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     });
     this.api.on('shutdown', () => {
       clearTimeout(this.chargerRetryTimer);
-      this.chargerController?.stop();
+      clearInterval(this.pollChargerSettingsTimer);
     });
   }
 
@@ -216,8 +212,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   //  ├─ 💡 LightSensor → "Charger Current" (Lux on Home screen equals Watts = amps × voltage)
   //  └─ 🔘 Switch → "EV Charging" (ON means charging now; toggling ON forces max current, OFF returns to the schedule)
   private setupChargerAccessory(profileName: string): void {
-    const uuid = this.api.hap.uuid.generate(`ev-charger-${this.config.chargerId}`);
-    let accessory = this.accessories.find((acc: PlatformAccessory) => acc.UUID === uuid);
+    const uuid = this.api.hap.uuid.generate(
+      `ev-charger-${this.config.chargerId}`,
+    );
+    let accessory = this.accessories.find(
+      (acc: PlatformAccessory) => acc.UUID === uuid,
+    );
     if (!accessory) {
       this.log.info('Registering EV Charger accessory...');
       accessory = new this.api.platformAccessory('EV Charger', uuid);
@@ -225,26 +225,44 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       accessory.addService(this.api.hap.Service.LightSensor, 'Charger Current');
       accessory.addService(this.api.hap.Service.Switch, 'EV Charging');
       this.accessories.push(accessory);
-      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
+        accessory,
+      ]);
     }
     accessory
       .getService(this.api.hap.Service.AccessoryInformation)!
-      .setCharacteristic(this.api.hap.Characteristic.Manufacturer, 'SolarCharge')
+      .setCharacteristic(
+        this.api.hap.Characteristic.Manufacturer,
+        'SolarCharge',
+      )
       .setCharacteristic(this.api.hap.Characteristic.Model, profileName);
 
     const { Characteristic, Service } = this.api.hap;
-    const current = accessory.getService(Service.LightSensor) || accessory.addService(Service.LightSensor);
-    current.getCharacteristic(Characteristic.CurrentAmbientLightLevel).setProps({ minValue: 0 });
+    const current =
+      accessory.getService(Service.LightSensor) ||
+      accessory.addService(Service.LightSensor);
+    current
+      .getCharacteristic(Characteristic.CurrentAmbientLightLevel)
+      .setProps({ minValue: 0 });
     current.setCharacteristic(Characteristic.Name, 'Charger Current');
-    const toggle = accessory.getService(Service.Switch) || accessory.addService(Service.Switch);
-    toggle.setCharacteristic(Characteristic.Name, 'EV Charging').setCharacteristic(Characteristic.On, false);
+    const toggle =
+      accessory.getService(Service.Switch) ||
+      accessory.addService(Service.Switch);
+    toggle
+      .setCharacteristic(Characteristic.Name, 'EV Charging')
+      .setCharacteristic(Characteristic.On, false);
 
-    toggle.getCharacteristic(Characteristic.On).onSet(async (value: unknown) => {
-      await this.chargerController?.setOverride(value as boolean);
-    });
+    toggle
+      .getCharacteristic(Characteristic.On)
+      .onSet(async (value: unknown) => {
+        await this.chargerController?.setOverride(value as boolean);
+      });
     if (this.chargerController) {
       this.chargerController.onUpdate = (amps: number, watts: number) => {
-        current.updateCharacteristic(Characteristic.CurrentAmbientLightLevel, watts);
+        current.updateCharacteristic(
+          Characteristic.CurrentAmbientLightLevel,
+          watts,
+        );
         toggle.updateCharacteristic(Characteristic.On, amps > 0);
       };
     }
@@ -257,17 +275,28 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       return;
     }
     if (!this.config.chargerId) {
-      this.log.warn('EV charger is configured but chargerId is missing. Enter your SolarCharge Charger ID.');
+      this.log.warn(
+        'EV charger is configured but chargerId is missing. Enter your SolarCharge Charger ID.',
+      );
       return;
     }
-    const { host, port } = parseHostPort(rawHost, this.config.chargerPort as number | undefined);
-    let profileName = (this.config.chargerProfile as string | undefined) || 'auto';
+    const { host, port } = parseHostPort(
+      rawHost,
+      this.config.chargerPort as number | undefined,
+    );
+    let profileName =
+      (this.config.chargerProfile as string | undefined) || 'auto';
 
     if (profileName === 'auto') {
       const result = await detectCharger(host, port);
       if (!result.reachable) {
-        this.log.warn(`EV charger auto-detection: ${host} is not reachable. Retrying in 5 minutes.`);
-        this.chargerRetryTimer = setTimeout(() => void this.startCharger(), 5 * 60 * 1000);
+        this.log.warn(
+          `EV charger auto-detection: ${host} is not reachable. Retrying in 5 minutes.`,
+        );
+        this.chargerRetryTimer = setTimeout(
+          () => void this.startCharger(),
+          5 * 60 * 1000,
+        );
         return;
       }
       if (result.matches.length !== 1) {
@@ -277,7 +306,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
             : `EV charger auto-detection is ambiguous (${result.matches.join(', ')}). Select a charger profile manually.`,
         );
         if (result.matches.length === 0) {
-          this.chargerRetryTimer = setTimeout(() => void this.startCharger(), 5 * 60 * 1000);
+          this.chargerRetryTimer = setTimeout(
+            () => void this.startCharger(),
+            5 * 60 * 1000,
+          );
         }
         return;
       }
@@ -292,11 +324,16 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           host,
           port,
         },
-        this.solarChargeUploader,
         this.log,
       );
       this.setupChargerAccessory(profileName);
       this.chargerController.start();
+      void this.pollChargerSettings();
+      clearInterval(this.pollChargerSettingsTimer);
+      this.pollChargerSettingsTimer = setInterval(
+        () => void this.pollChargerSettings(),
+        this.pollAppSettingsInterval,
+      );
     } catch (error: unknown) {
       this.log.error(error instanceof Error ? error.message : String(error));
     }
@@ -453,16 +490,21 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           let startHour = 2; // Fallback: standard night charging start
           let stopHour = 6; // Fallback: standard night charging end
           const current = await this.solarChargeUploader.getInverterSettings();
-          if (shouldEnable && current && (current.buyFrom !== 0 || current.buyTo !== 0)) {
+          if (
+            shouldEnable &&
+            current &&
+            (current.buyFrom !== 0 || current.buyTo !== 0)
+          ) {
             startHour = current.buyFrom;
             stopHour = current.buyTo;
           }
-          const success = await this.activeProfile?.setChargeSettings(
-            this.modbusClient,
-            shouldEnable,
-            startHour,
-            stopHour,
-          ) ?? false;
+          const success =
+            (await this.activeProfile?.setChargeSettings(
+              this.modbusClient,
+              shouldEnable,
+              startHour,
+              stopHour,
+            )) ?? false;
 
           if (success) {
             this.lastBuying = shouldEnable;
@@ -560,16 +602,21 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           let startHour = 9; // Fallback: standard morning selling start
           let stopHour = 12; // Fallback: standard morning selling end
           const current = await this.solarChargeUploader.getInverterSettings();
-          if (shouldEnable && current && (current.sellFrom !== 0 || current.sellTo !== 0)) {
+          if (
+            shouldEnable &&
+            current &&
+            (current.sellFrom !== 0 || current.sellTo !== 0)
+          ) {
             startHour = current.sellFrom;
             stopHour = current.sellTo;
           }
-          const success = await this.activeProfile?.setDischargeSettings(
-            this.modbusClient,
-            shouldEnable,
-            startHour,
-            stopHour,
-          ) ?? false;
+          const success =
+            (await this.activeProfile?.setDischargeSettings(
+              this.modbusClient,
+              shouldEnable,
+              startHour,
+              stopHour,
+            )) ?? false;
 
           if (success) {
             this.lastSending = shouldEnable;
@@ -598,7 +645,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     }
 
     // Remove the legacy TemperatureSensor from accessories cached by older versions
-    const legacyTemp = batteryLevelAccessory.getService(this.api.hap.Service.TemperatureSensor);
+    const legacyTemp = batteryLevelAccessory.getService(
+      this.api.hap.Service.TemperatureSensor,
+    );
     if (legacyTemp) {
       batteryLevelAccessory.removeService(legacyTemp);
     }
@@ -606,14 +655,20 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     // Get or CREATE light sensor service (battery % shown as Lux, like the inverter tile)
     this.batteryLevelService =
       batteryLevelAccessory.getService(this.api.hap.Service.LightSensor) ||
-      batteryLevelAccessory.addService(this.api.hap.Service.LightSensor, 'Battery Level');
+      batteryLevelAccessory.addService(
+        this.api.hap.Service.LightSensor,
+        'Battery Level',
+      );
 
     this.batteryLevelService
       .getCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel)
       .setProps({ minValue: 0 });
     this.batteryLevelService
       .setCharacteristic(this.api.hap.Characteristic.Name, 'Battery Level')
-      .setCharacteristic(this.api.hap.Characteristic.CurrentAmbientLightLevel, 50);
+      .setCharacteristic(
+        this.api.hap.Characteristic.CurrentAmbientLightLevel,
+        50,
+      );
   }
 
   private async connectAndStartPolling(): Promise<void> {
@@ -636,10 +691,15 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       if (this.ipAddress) {
         // TCP connection
         // TCP is not implemented yet; falls back to RTU
-        this.log.warn('⚠️ TCP support is configured but not fully implemented yet. Using RTU fallback.');
-        await this.modbusClient.connectRTUBuffered(this.serialPort || '/dev/ttyUSB0', {
-          baudRate: 9600,
-        });
+        this.log.warn(
+          '⚠️ TCP support is configured but not fully implemented yet. Using RTU fallback.',
+        );
+        await this.modbusClient.connectRTUBuffered(
+          this.serialPort || '/dev/ttyUSB0',
+          {
+            baudRate: 9600,
+          },
+        );
       } else {
         // RTU serial connection
         const connectionPromise = this.modbusClient.connectRTUBuffered(
@@ -650,7 +710,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         let timeoutHandle: NodeJS.Timeout | undefined;
         const timeoutPromise = new Promise<void>((_, reject) => {
           timeoutHandle = setTimeout(
-            () => reject(new Error('Modbus connection timeout after 10 seconds')),
+            () =>
+              reject(new Error('Modbus connection timeout after 10 seconds')),
             10000,
           );
         });
@@ -677,35 +738,38 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
         this.inverterAccessory
           .getService(this.api.hap.Service.AccessoryInformation)
-          ?.updateCharacteristic(this.api.hap.Characteristic.Model, displayName);
+          ?.updateCharacteristic(
+            this.api.hap.Characteristic.Model,
+            displayName,
+          );
 
         this.log.info(
           `📱 Inverter accessory renamed to: "${displayName}" (visible in HomeKit)`,
         );
       }
 
-      // Initial poll and start the fixed polling timer (5 seconds)
+      // Initial poll and start the fixed polling timer
       await this.pollInverterData();
-      this.pollingTimer = setInterval(
+      this.pollInverterDataTimer = setInterval(
         () => this.pollInverterData(),
-        this.pollInterval,
+        this.pollInverterDataInterval,
       );
 
-      // Sync app settings to the inverter every 5 minutes
-      await this.syncSettingsFromApp();
-      this.syncTimer = setInterval(
-        () => this.syncSettingsFromApp(),
-        5 * 60 * 1000,
-      );
-
-      // Start the upload aggregation timer (configurable interval)
-      this.uploadTimer = setInterval(
+      // Start the upload aggregation timer
+      this.uploadInverterDataTimer = setInterval(
         () => this.uploadAggregatedData(),
-        this.uploadInterval,
+        this.uploadInverterDataInterval,
+      );
+
+      // Sync app settings to the inverter
+      await this.pollAppSettings();
+      this.pollAppSettingsTimer = setInterval(
+        () => this.pollAppSettings(),
+        this.pollAppSettingsInterval,
       );
 
       this.log.info(
-        `📊 Polling started: every ${this.pollInterval}ms | Upload: every ${this.uploadInterval}ms`,
+        `📊 Polling started: every ${this.pollInverterDataInterval}ms | Upload: every ${this.uploadInverterDataInterval}ms | Settings sync: every ${this.pollAppSettingsInterval}ms`,
       );
     } catch (error: any) {
       this.log.error(
@@ -728,17 +792,17 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   }
 
   private stopTimers(): void {
-    if (this.pollingTimer) {
-      clearInterval(this.pollingTimer);
-      this.pollingTimer = undefined;
+    if (this.pollInverterDataTimer) {
+      clearInterval(this.pollInverterDataTimer);
+      this.pollInverterDataTimer = undefined;
     }
-    if (this.syncTimer) {
-      clearInterval(this.syncTimer);
-      this.syncTimer = undefined;
+    if (this.uploadInverterDataTimer) {
+      clearInterval(this.uploadInverterDataTimer);
+      this.uploadInverterDataTimer = undefined;
     }
-    if (this.uploadTimer) {
-      clearInterval(this.uploadTimer);
-      this.uploadTimer = undefined;
+    if (this.pollAppSettingsTimer) {
+      clearInterval(this.pollAppSettingsTimer);
+      this.pollAppSettingsTimer = undefined;
     }
   }
 
@@ -749,8 +813,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
    */
   private async initializeInverterProfile(): Promise<void> {
     if (this.inverterProfileName === 'auto') {
-      this.log.info('🔍 Auto-detecting inverter profile from available JSON profiles...');
-      
+      this.log.info(
+        '🔍 Auto-detecting inverter profile from available JSON profiles...',
+      );
+
       // Get all available profiles from JSON files
       const availableProfiles = InverterProfileFactory.listAvailable();
       this.log.debug(`📋 Available profiles: ${availableProfiles.join(', ')}`);
@@ -778,14 +844,17 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
         // List all manufacturers available
         const manufacturers = InverterProfileFactory.getManufacturers();
-        this.log.info(`📦 Available manufacturers: ${manufacturers.join(', ')}`);
+        this.log.info(
+          `📦 Available manufacturers: ${manufacturers.join(', ')}`,
+        );
 
         if (manufacturers.length > 0) {
           // Default to first manufacturer's first profile
           const defaultManufacturer = manufacturers[0];
-          const profilesForManufacturer = InverterProfileFactory.getProfilesByManufacturer(
-            defaultManufacturer,
-          );
+          const profilesForManufacturer =
+            InverterProfileFactory.getProfilesByManufacturer(
+              defaultManufacturer,
+            );
 
           if (profilesForManufacturer.length > 0) {
             matchedProfileName = profilesForManufacturer[0].name;
@@ -797,7 +866,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       }
 
       if (matchedProfileName) {
-        const profile = InverterProfileFactory.createFromName(matchedProfileName, this.log);
+        const profile = InverterProfileFactory.createFromName(
+          matchedProfileName,
+          this.log,
+        );
         this.activeProfile = profile || undefined;
         if (profile) {
           profile.debugLogging = this.debugLogging;
@@ -810,13 +882,19 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         }
       } else {
         this.log.error('❌ No inverter profiles found in profiles/ directory');
-        throw new Error('No inverter profiles available. Check profiles/ folder.');
+        throw new Error(
+          'No inverter profiles available. Check profiles/ folder.',
+        );
       }
     } else {
       // Manual profile selection - let JSON be the source of truth
-      this.log.info(`📌 Loading manually selected profile: ${this.inverterProfileName}`);
+      this.log.info(
+        `📌 Loading manually selected profile: ${this.inverterProfileName}`,
+      );
 
-      const config = InverterProfileFactory.getProfileConfig(this.inverterProfileName);
+      const config = InverterProfileFactory.getProfileConfig(
+        this.inverterProfileName,
+      );
       if (!config) {
         this.log.error(
           `❌ Profile not found: ${this.inverterProfileName}. Check profiles/ directory.`,
@@ -827,7 +905,10 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         throw new Error(`Profile not found: ${this.inverterProfileName}`);
       }
 
-      const profile = InverterProfileFactory.createFromName(this.inverterProfileName, this.log);
+      const profile = InverterProfileFactory.createFromName(
+        this.inverterProfileName,
+        this.log,
+      );
       this.activeProfile = profile || undefined;
       if (profile) {
         profile.debugLogging = this.debugLogging;
@@ -851,9 +932,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       this.log.debug('Polling inverter for data...');
 
       // Fetch all live inverter telemetry using active profile
-      const metrics = await this.activeProfile?.readMetrics(
-        this.modbusClient,
-      );
+      const metrics = await this.activeProfile?.readMetrics(this.modbusClient);
 
       if (!metrics) {
         this.log.error('Failed to read inverter metrics');
@@ -888,10 +967,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       const isBuyingFromGrid = this.lastBuying;
 
       // Read Discharge settings to determine if sending to grid
-      const dischargeState =
-        await this.activeProfile?.readDischargeSettings(
-          this.modbusClient,
-        );
+      const dischargeState = await this.activeProfile?.readDischargeSettings(
+        this.modbusClient,
+      );
       if (dischargeState) {
         this.lastSending = dischargeState.enable;
       }
@@ -918,8 +996,6 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           currentWatts,
         );
       }
-
-
 
       if (this.solarSwitchService) {
         // ACCESSORY 1: Switch ON if buying power from grid (AC charging enabled)
@@ -969,7 +1045,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     try {
       // Calculate time window: from (now - uploadInterval) to now
       const now = new Date();
-      const uploadStart = new Date(now.getTime() - this.uploadInterval);
+      const uploadStart = new Date(
+        now.getTime() - this.uploadInverterDataInterval,
+      );
 
       const startHHMM = uploadStart.toTimeString().slice(0, 5); // "HH:MM"
       const endHHMM = now.toTimeString().slice(0, 5); // "HH:MM"
@@ -1000,21 +1078,41 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     );
   }
 
-  /**
-   * Pulls the SolarCharge app settings and writes them to the inverter
-   * when they differ from what was last read from the inverter.
-   */
-  private async syncSettingsFromApp(): Promise<void> {
-    if (this.syncing || !this.activeProfile) {
+  private async pollChargerSettings(): Promise<void> {
+    const controller = this.chargerController;
+    if (!controller) {
       return;
     }
-    this.syncing = true;
+    try {
+      const settings = await this.solarChargeUploader.getChargerSettings();
+      this.log.info(
+        settings
+          ? `🔌 EV charger settings: ${settings.from}:00-${settings.to}:00, ${settings.amps} A (max ${settings.maxAmps} A)`
+          : '🔌 EV charger settings unavailable from SolarCharge',
+      );
+      if (settings && settings.profileName !== controller.profileName) {
+        await this.solarChargeUploader.setChargerSettings({
+          ...settings,
+          profileName: controller.profileName,
+        });
+      }
+      await controller.applySettings(settings);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log.error(`Error syncing app settings to charger: ${msg}`);
+    }
+  }
+
+  private async pollInverterSettings(): Promise<void> {
     try {
       const api = await this.solarChargeUploader.getInverterSettings();
       if (!api) {
         return;
       }
       const profile = this.activeProfile;
+      if (!profile) {
+        return;
+      }
 
       const apply = async (
         kind: 'buy' | 'sell',
@@ -1022,33 +1120,55 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         to: number,
       ): Promise<void> => {
         const wantEnable = from !== 0 || to !== 0;
-        const current = kind === 'buy'
-          ? await profile.readChargeSettings(this.modbusClient, true)
-          : await profile.readDischargeSettings(this.modbusClient, true);
+        const current =
+          kind === 'buy'
+            ? await profile.readChargeSettings(this.modbusClient, true)
+            : await profile.readDischargeSettings(this.modbusClient, true);
         if (!current) {
           return;
         }
-        const differs = current.enable !== wantEnable
-          || (wantEnable && (current.startHour !== from || current.stopHour !== to));
+        const differs =
+          current.enable !== wantEnable ||
+          (wantEnable &&
+            (current.startHour !== from || current.stopHour !== to));
         if (!differs) {
           return;
         }
         this.log.info(
           `🔄 App ${kind} settings changed -> ${wantEnable ? `${from}:00-${to}:00` : 'OFF'}; writing to inverter`,
         );
-        const ok = kind === 'buy'
-          ? await profile.setChargeSettings(this.modbusClient, wantEnable, from, to)
-          : await profile.setDischargeSettings(this.modbusClient, wantEnable, from, to);
+        const ok =
+          kind === 'buy'
+            ? await profile.setChargeSettings(
+              this.modbusClient,
+              wantEnable,
+              from,
+              to,
+            )
+            : await profile.setDischargeSettings(
+              this.modbusClient,
+              wantEnable,
+              from,
+              to,
+            );
         if (!ok) {
-          this.log.error(`Failed to write ${kind} settings from app to inverter`);
+          this.log.error(
+            `Failed to write ${kind} settings from app to inverter`,
+          );
           return;
         }
         if (kind === 'buy') {
           this.lastBuying = wantEnable;
-          this.solarSwitchService?.updateCharacteristic(this.api.hap.Characteristic.On, wantEnable);
+          this.solarSwitchService?.updateCharacteristic(
+            this.api.hap.Characteristic.On,
+            wantEnable,
+          );
         } else {
           this.lastSending = wantEnable;
-          this.batterySwitchService?.updateCharacteristic(this.api.hap.Characteristic.On, wantEnable);
+          this.batterySwitchService?.updateCharacteristic(
+            this.api.hap.Characteristic.On,
+            wantEnable,
+          );
         }
       };
 
@@ -1060,5 +1180,19 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     } finally {
       this.syncing = false;
     }
+  }
+
+  /**
+   * Polls the SolarCharge app settings and writes them to the inverter
+   * when they differ from what was last read from the inverter.
+   * Also polls the inverter and charger settings but just keeping start/end time in plugin.
+   */
+  private async pollAppSettings(): Promise<void> {
+    if (this.syncing || !this.activeProfile) {
+      return;
+    }
+    this.syncing = true;
+
+    this.pollInverterSettings();
   }
 }

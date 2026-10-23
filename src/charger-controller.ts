@@ -2,7 +2,7 @@ import type { Logging } from 'homebridge';
 import ModbusRTU from 'modbus-serial';
 import { ChargerProfileLoader } from './charger-profile.js';
 import type { ChargerProfileConfig } from './charger-profile.js';
-import type { ChargerSettingsPayload, SolarChargeUploader } from './solarcharge.js';
+import type { ChargerSettingsPayload } from './solarcharge.js';
 
 interface ChargerModbusClient {
   connectTCP(address: string, options: { port: number }): Promise<void>;
@@ -23,12 +23,12 @@ export const DEFAULT_MAX_AMPS = 16;
 
 /**
  * Chargers have no schedule register, so the plugin acts as the scheduler:
- * every interval it fetches the SolarCharge charger settings and writes either the
+ * on every platform poll it receives the SolarCharge charger settings and writes either the
  * allowed amps (inside the window) or 0 A / pause (outside it).
  */
 export class ChargerController {
-  private timer?: NodeJS.Timeout;
   private running = false;
+  private lastSettings: ChargerSettingsPayload | null = null;
   private lastAmps?: number;
   private override = false;
   private lastVoltage = 230;
@@ -39,7 +39,6 @@ export class ChargerController {
 
   constructor(
     private readonly options: ChargerControllerOptions,
-    private readonly uploader: SolarChargeUploader,
     private readonly log: Logging,
   ) {
     const profile = ChargerProfileLoader.getProfile(options.profileName);
@@ -60,37 +59,30 @@ export class ChargerController {
     return from < to ? hour >= from && hour < to : hour >= from || hour < to;
   }
 
-  start(intervalMs = 5 * 60 * 1000): void {
+  get profileName(): string {
+    return this.profile.name;
+  }
+
+  start(): void {
     this.log.info(`🔌 EV charger enabled: ${this.profile.manufacturer} ${this.profile.model} @ ${this.options.host}`);
-    void this.tick();
-    this.timer = setInterval(() => void this.tick(), intervalMs);
   }
 
   /** Manual override from HomeKit: true charges at max current regardless of the schedule. */
   setOverride(enabled: boolean): Promise<void> {
     this.override = enabled;
-    return this.tick();
+    return this.applySettings(this.lastSettings);
   }
 
-  stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = undefined;
-    }
-  }
-
-  private async tick(): Promise<void> {
+  /** Applies the latest SolarCharge settings (null = backend unreachable); called by the platform. */
+  async applySettings(settings: ChargerSettingsPayload | null): Promise<void> {
     if (this.running) {
       return;
     }
     this.running = true;
+    this.lastSettings = settings;
     try {
-      const settings = await this.uploader.getChargerSettings();
       if (!settings && !this.override) {
         return; // keep the last state when the backend is unreachable
-      }
-      if (settings && settings.profileName !== this.profile.name) {
-        await this.uploader.setChargerSettings({ ...settings, profileName: this.profile.name });
       }
       const maxAmps = settings?.maxAmps || this.lastMaxAmps;
       this.lastMaxAmps = maxAmps;
