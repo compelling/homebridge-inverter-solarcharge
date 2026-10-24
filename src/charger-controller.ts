@@ -3,6 +3,7 @@ import ModbusRTU from 'modbus-serial';
 import { ChargerProfileLoader } from './charger-profile.js';
 import type { ChargerProfileConfig } from './charger-profile.js';
 import type { ChargerSettingsPayload } from './solarcharge.js';
+import { TwcMaster } from './twc-master.js';
 
 interface ChargerModbusClient {
   connectTCP(address: string, options: { port: number }): Promise<void>;
@@ -17,6 +18,8 @@ export interface ChargerControllerOptions {
   profileName: string;
   host: string;
   port?: number;
+  /** Serial device path for SERIAL profiles (e.g. /dev/ttyUSB1). */
+  serialPath?: string;
 }
 
 export const DEFAULT_MAX_AMPS = 16;
@@ -36,6 +39,7 @@ export class ChargerController {
   /** Called after every applied current limit (0 = not charging) with the resulting power in watts. */
   public onUpdate?: (amps: number, watts: number) => void;
   private readonly profile: ChargerProfileConfig;
+  private twc?: TwcMaster;
 
   constructor(
     private readonly options: ChargerControllerOptions,
@@ -64,7 +68,20 @@ export class ChargerController {
   }
 
   start(): void {
-    this.log.info(`🔌 EV charger enabled: ${this.profile.manufacturer} ${this.profile.model} @ ${this.options.host}`);
+    this.log.info(`🔌 EV charger enabled: ${this.profile.manufacturer} ${this.profile.model} @ ${this.options.serialPath ?? this.options.host}`);
+    if (this.profile.connectionType === 'SERIAL') {
+      if (!this.options.serialPath) {
+        throw new Error('Charger profile requires chargerSerialPath');
+      }
+      this.twc = new TwcMaster(this.options.serialPath, this.profile.connection.defaultBaud ?? 9600, this.log);
+      this.twc.open().catch((error: unknown) => {
+        this.log.error(`Cannot open ${this.options.serialPath}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+  }
+
+  stop(): void {
+    this.twc?.close();
   }
 
   /** Manual override from HomeKit: true charges at max current regardless of the schedule. */
@@ -106,7 +123,9 @@ export class ChargerController {
   }
 
   private async apply(amps: number): Promise<void> {
-    if (this.profile.connectionType === 'HTTP') {
+    if (this.profile.connectionType === 'SERIAL') {
+      this.twc?.setAmps(amps);
+    } else if (this.profile.connectionType === 'HTTP') {
       await this.applyHttp(amps);
     } else {
       await this.applyModbus(amps);

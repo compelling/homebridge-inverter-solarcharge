@@ -1,0 +1,15 @@
+{
+  "name": "Tesla_TWC_RS485",
+  "manufacturer": "Tesla",
+  "model": "Wall Connector Gen 2 (direct RS-485)",
+  "connectionType": "SERIAL",
+  "connection": {
+    "defaultBaud": 9600
+  },
+  "control": {
+    "dataType": "int",
+    "scalingFactor": 1.0
+  },
+  "notes": "Plugin acts as TWC load-share master over its own RS-485 adapter (separate from the inverter port). The Wall Connector must be set to Slave (rotary switch) and wired A/B to the adapter. Only one slave is supported; offered current below 6 A means stop.",
+  "source": "https://github.com/ngardiner/TWCManager"
+}

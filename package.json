@@ -32,7 +32,8 @@
   },
   "dependencies": {
     "homebridge-lib": "^8.1.4",
-    "modbus-serial": "^8.0.0"
+    "modbus-serial": "^8.0.0",
+    "serialport": "^13.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

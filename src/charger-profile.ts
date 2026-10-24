@@ -6,13 +6,14 @@ export interface ChargerProfileConfig {
   name: string;
   manufacturer: string;
   model: string;
-  connectionType: 'TCP' | 'HTTP';
+  connectionType: 'TCP' | 'HTTP' | 'SERIAL';
   connection: {
     defaultTcpPort?: number;
     defaultHttpPort?: number;
     modbusSlaveId?: number;
     supportsRtu?: boolean;
     baseUrl?: string;
+    defaultBaud?: number;
   };
   control: {
     currentLimitRegister?: number;

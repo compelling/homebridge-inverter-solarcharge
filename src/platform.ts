@@ -270,7 +270,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
 
   /** Starts EV charger control; profile "auto" (or unset with an IP) triggers detection. */
   private async startCharger(): Promise<void> {
-    const rawHost = this.config.chargerIpAddress as string | undefined;
+    const serialPath = this.config.chargerSerialPath as string | undefined;
+    const rawHost = (this.config.chargerIpAddress as string | undefined) || (serialPath ? 'serial' : undefined);
     if (!rawHost) {
       return;
     }
@@ -286,6 +287,9 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     );
     let profileName =
       (this.config.chargerProfile as string | undefined) || 'auto';
+    if (serialPath && profileName === 'auto') {
+      profileName = 'Tesla_TWC_RS485';
+    }
 
     if (profileName === 'auto') {
       const result = await detectCharger(host, port);
@@ -323,6 +327,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           profileName,
           host,
           port,
+          serialPath,
         },
         this.log,
       );

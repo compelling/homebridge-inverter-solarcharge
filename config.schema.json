@@ -54,7 +54,7 @@
       "chargerProfile": {
         "title": "EV Charger Profile (optional)",
         "type": "string",
-        "enum": ["auto", "Wallbox_Pulsar", "Alfen_Eve", "ABB_TerraAC", "GoE_Gemini", "Tesla_TWCManager"],
+        "enum": ["auto", "Wallbox_Pulsar", "Alfen_Eve", "ABB_TerraAC", "GoE_Gemini", "Tesla_TWC_RS485"],
         "default": "auto",
         "description": "Select 'auto' to detect the charger from its IP address, or pick your model. Requires the charger IP address."
       },
@@ -67,6 +67,12 @@
         "title": "EV Charger IP Address",
         "type": "string",
         "placeholder": "e.g., 192.168.1.60"
+      },
+      "chargerSerialPath": {
+        "title": "EV Charger Serial Port (Tesla_TWC_RS485 only)",
+        "type": "string",
+        "placeholder": "e.g., /dev/ttyUSB1",
+        "description": "RS-485 adapter connected to the Tesla Wall Connector. Must be a different port than the inverter's."
       },
       "chargerPort": {
         "title": "EV Charger Port (optional)",

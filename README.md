@@ -11,8 +11,7 @@ A dynamic platform plugin for Homebridge that integrates solar inverters / home 
 ## Features
 
 - **🔄 Solar Inverter Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar
-
-- **🔄 EV Charger Multi-Brand Support**: Wallbox, Alfen, ABB, go-e and Tesla (TWCManager)
+- **🔄 EV Charger Multi-Brand Support**: Wallbox, Alfen, ABB, go-e and Tesla (only Gen 2 via direct RS-485)
 
 **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen (see separate section)
 
@@ -60,7 +59,8 @@ Either fill in the plugin settings UI to configure the plugin or add this to you
 - `plantId`, `serialNum`: SolarCharge API credentials for syncing buy/sell times and uploading metrics
 - `chargerProfile` (optional): `"auto"` (default, detects the charger at `chargerIpAddress`) or a charger profile name (e.g., `"Alfen_Eve"`)
 - `chargerId`: SolarCharge Charger ID, used instead of `plantId` for the charger API. EV charging is disabled when empty.
-- `chargerIpAddress`: IP of the EV charger (or the TWCManager host). EV charging is disabled when empty
+- `chargerIpAddress`: IP of the EV charger. EV charging is disabled when empty (Tesla RS-485 uses `chargerSerialPath` instead)
+- `chargerSerialPath`: Serial device of the RS-485 adapter wired to a Tesla Wall Connector (e.g. `/dev/ttyUSB1`). EV charging is enabled by this or by `chargerIpAddress`; with only this set, profile `Tesla_TWC_RS485` is used automatically
 - `chargerPort`: Overrides the profile's default port
 
 ## HomeKit Integration
@@ -103,6 +103,17 @@ Created only when `chargerIpAddress` and `chargerId` are configured.
   - Toggle ON to force charging at the charger's max current (`maxAmps` from the SolarCharge app, 16 A if unavailable) regardless of the schedule
   - Toggle OFF to return to the SolarCharge schedule (the switch then reflects the schedule again)
   - The accessory model shows the detected or selected charger profile
+
+## Tesla Wall Connector Gen 2 (direct RS-485)
+
+The plugin can act as the load-share **master** for a Tesla Wall Connector Gen 2, with no TWCManager or other external software. It needs its own RS-485 adapter, **separate from the inverter's** Modbus port.
+
+- Set the Wall Connector's rotary switch to **Slave** and wire its A/B terminals to the adapter's A/B.
+- Set `chargerSerialPath` (e.g. `/dev/ttyUSB1`) and `chargerId`; the baud rate is 9600 (8N1).
+- On start the plugin announces itself (`linkready1`/`linkready2`), adopts the first Wall Connector that answers and then sends heartbeats offering the allowed current. Below 6 A the offer becomes 0 A (stop). If the plugin stops updating, the offer drops to 0 A after 10 minutes.
+- Only one Wall Connector is supported. Test with no car connected first and look for `TWC slave ... linked` in the log.
+
+**Protocol source:** the Tesla TWC Gen 2 RS-485 protocol is not officially documented. The message formats (`FC E1`/`FB E2` link-ready, `FB E0` heartbeat, command codes `05`/`09`, amps in 1/100 A, checksum, SLIP-style `C0`/`DB` escaping) were reverse-engineered by the community and follow the implementation in [TWCManager](https://github.com/ngardiner/TWCManager) (`TWCMaster.py`, `TWCSlave.py`, `Interface/RS485.py`), which in turn builds on the original TWCManager by cdragon/jkittenberg. Use at your own risk: wrong commands can put the charger or car in an error state.
 
 ## Architecture: JSON-Based Profile System
 
@@ -177,31 +188,11 @@ Each EV charger profile is defined in `/chargerProfiles/*.json`. Chargers have n
 }
 ```
 
-**HTTP example** (`tesla-twcmanager.json`):
-
-```json
-{
-  "name": "Tesla_TWCManager",
-  "manufacturer": "Tesla",
-  "model": "Wall Connector Gen 2 (via TWCManager)",
-  "connectionType": "HTTP",
-  "connection": { "defaultHttpPort": 8080 },
-  "control": {
-    "setEndpoint": "/api/chargeNow",
-    "setMethod": "POST",
-    "setBody": "{\"chargeNowRate\": {value}, \"chargeNowDuration\": 900}",
-    "pauseEndpoint": "/api/cancelChargeNow",
-    "pauseMethod": "POST",
-    "dataType": "int",
-    "scalingFactor": 1.0
-  },
-  "detection": { "type": "http", "probePath": "/api/getStatus", "probeKeys": ["maxCurrent", "carsCharging"] }
-}
-```
+**HTTP example**: see `go-e-gemini.json`. **Serial example**: see `tesla-twc-rs485.json`.
 
 | Field | Description |
 |-------|-------------|
-| `connectionType` | `TCP` (Modbus TCP) or `HTTP` |
+| `connectionType` | `TCP` (Modbus TCP), `HTTP` or `SERIAL` |
 | `connection.defaultTcpPort` / `defaultHttpPort` | Port used when `chargerPort` is not set |
 | `connection.modbusSlaveId` | Modbus unit ID (Modbus chargers) |
 | `control.currentLimitRegister` | Modbus register holding the current limit in amps (decimal; ABB `0x4100` = `16640`) |
@@ -382,7 +373,7 @@ EV chargers use their own settings: `chargerIpAddress` (optionally `host:port`) 
 **EV Charger Not Detected / Not Charging:**
 - `chargerId` and `chargerIpAddress` must both be set; otherwise EV charging is not started
 - If auto-detection reports no match or an ambiguous match, select `chargerProfile` manually
-- Check the charger is reachable on the port from its profile (Modbus TCP 502, go-e 80, TWCManager 8080) and that Modbus TCP / the HTTP API is enabled on the charger
+- Check the charger is reachable on the port from its profile (Modbus TCP 502, go-e 80) and that Modbus TCP / the HTTP API is enabled on the charger
 - Set `logLevel` to `debug` and look for `EV charger` log lines; `⚡ EV charger current limit set to N A` confirms writes
 - ABB Terra AC: if the current is 10x too high or low, adjust `scalingFactor` (0.1 vs 0.01 depends on firmware)
 
@@ -423,7 +414,8 @@ src/
   inverter-profile.ts      # Abstract profile interface
   profile-loader.ts        # JSON profile loader & factory
   charger-profile.ts       # EV charger profile types & loader
-  charger-controller.ts    # EV charger scheduler/writer (Modbus TCP & HTTP)
+  charger-controller.ts    # EV charger scheduler/writer (Modbus TCP, HTTP, serial)
+  twc-master.ts            # Tesla Wall Connector Gen 2 RS-485 load-share master
   charger-detect.ts        # EV charger auto-detection
   solarcharge.ts           # SolarCharge cloud API client
   settings.ts              # Constants
@@ -433,7 +425,7 @@ chargerProfiles/           # JSON EV charger profiles
   alfen-eve.json
   abb-terra-ac.json
   go-e-gemini.json
-  tesla-twcmanager.json
+  tesla-twc-rs485.json
 
 profiles/                  # JSON inverter profiles (master source)
   growatt-sph.json
@@ -470,7 +462,7 @@ EV chargers have no schedule register, so the plugin acts as the scheduler. Ever
   <tr><td>Alfen<br>(Eve Single S-line / Pro)</td><td>alfen-eve.json</td><td>Modbus TCP</td><td>Register 1210-1211, <code>float32</code>, written with writeMultipleRegisters</td><td>502</td><td><a href="https://github.com/tabnul/alfen-eve-modbus-ha">alfen-eve-modbus-ha (Modbus register map)</a></td></tr>
   <tr><td>ABB<br>(Terra AC)</td><td>abb-terra-ac.json</td><td>Modbus TCP (RTU optional)</td><td>Register 16640 (<code>0x4100</code>), <code>uint16</code>, scale 0.1 (0.01 on some firmware)</td><td>502</td><td><a href="https://library.e.abb.com/public/982c2befa2734d259e66d76fa4a7ba77/ABB_Terra_AC_Charger_ModbusCommunication_v1.11.pdf">ABB Terra AC Modbus Communication (PDF)</a></td></tr>
   <tr><td>go-e<br>(Gemini / HOME)</td><td>go-e-gemini.json</td><td>HTTP API v2</td><td><code>GET /api/set?frc=0&amp;amp=N</code>, pause with <code>frc=1</code></td><td>80</td><td><a href="https://github.com/goecharger/go-eCharger-API-v2">go-eCharger API v2 (GitHub)</a></td></tr>
-  <tr><td>Tesla<br>(Wall Connector Gen 2 via TWCManager)</td><td>tesla-twcmanager.json</td><td>HTTP (TWCManager)</td><td><code>POST /api/chargeNow</code>, stop with <code>/api/cancelChargeNow</code></td><td>8080</td><td><a href="https://github.com/ngardiner/TWCManager">TWCManager</a></td></tr>
+  <tr><td>Tesla<br>(Wall Connector Gen 2, direct RS-485)</td><td>tesla-twc-rs485.json</td><td>Serial (TWC load-share master)</td><td>Heartbeat with offered amps; 0 A to stop</td><td>9600 baud (<code>chargerSerialPath</code>)</td><td><a href="https://github.com/ngardiner/TWCManager">TWCManager (protocol reference)</a></td></tr>
 </table>
 
 All Modbus chargers use big-endian encoding. Verify register numbers and scaling against your charger's firmware documentation. Add more by creating a JSON profile in `chargerProfiles/`; HTTP chargers can set `setMethod`, `setBody` and `pauseEndpoint`, and a `detection` block enables auto-detection.
