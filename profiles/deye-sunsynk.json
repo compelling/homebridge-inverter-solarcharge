@@ -37,5 +37,9 @@
   "encoding": {
     "timeFormat": "MinutesFromMidnight",
     "endianness": "BigEndian"
+  },
+  "clock": {
+    "register": 62,
+    "layout": "PackedBytes"
   }
 }

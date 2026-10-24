@@ -170,6 +170,101 @@ export class DynamicInverterProfile extends InverterProfile {
     }
   }
 
+  private clockWriteUnsupported = false;
+
+  async syncClock(modbusClient: any, maxSkewSeconds = 60): Promise<number | null> {
+    const clock = this.config.clock;
+    if (!clock) {
+      return null;
+    }
+    const count = clock.layout === 'SixRegisters' ? 6 : 3;
+    const raw: number[] = (
+      await modbusClient.readHoldingRegisters(clock.register, count)
+    ).data;
+
+    let parts: number[]; // year, month, day, hour, minute, second
+    if (clock.layout === 'SixRegisters') {
+      parts = raw.slice(0, 6);
+    } else {
+      parts = [
+        raw[0] >> 8, raw[0] & 0xff,
+        raw[1] >> 8, raw[1] & 0xff,
+        raw[2] >> 8, raw[2] & 0xff,
+      ];
+    }
+    const twoDigitYear = parts[0] < 100;
+    const year = twoDigitYear ? 2000 + parts[0] : parts[0];
+    const inverterTime = new Date(
+      year, parts[1] - 1, parts[2], parts[3], parts[4], parts[5],
+    ).getTime();
+    const now = new Date();
+    const skew = Math.round((inverterTime - now.getTime()) / 1000);
+    const pad = (n: number): string => String(n).padStart(2, '0');
+    const text = `${year}-${pad(parts[1])}-${pad(parts[2])} ${pad(parts[3])}:${pad(parts[4])}:${pad(parts[5])}`;
+
+    if (Number.isNaN(skew)) {
+      this.log.warn(`[${this.config.name}] Inverter clock unreadable (${raw.join(',')})`);
+      return null;
+    }
+    if (Math.abs(skew) <= maxSkewSeconds) {
+      this.log.debug(`[${this.config.name}] Inverter clock ${text} within ${skew}s of host time`);
+      return skew;
+    }
+
+    const yearValue = twoDigitYear ? now.getFullYear() - 2000 : now.getFullYear();
+    const values =
+      clock.layout === 'SixRegisters'
+        ? [yearValue, now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds()]
+        : [
+          (yearValue << 8) | (now.getMonth() + 1),
+          (now.getDate() << 8) | now.getHours(),
+          (now.getMinutes() << 8) | now.getSeconds(),
+        ];
+
+    if (this.clockWriteUnsupported) {
+      this.log.debug(`[${this.config.name}] Inverter clock ${text} is ${skew}s off host time (clock is not writable on this inverter)`);
+      return skew;
+    }
+    this.log.warn(
+      `[${this.config.name}] Inverter clock ${text} is ${skew}s off host time; ${this.killSwitch ? 'would set' : 'setting'} it to ${now.toString()}`,
+    );
+    if (this.killSwitch) {
+      return skew;
+    }
+
+    // Try the write forms in turn: one multi-register write (function 16), function 16 per register, function 6 per register
+    const attempts: Array<[string, () => Promise<void>]> = [
+      ['function 16, all registers', async () => {
+        await modbusClient.writeRegisters(clock.register, values);
+      }],
+      ['function 16, per register', async () => {
+        for (let i = 0; i < values.length; i++) {
+          await modbusClient.writeRegisters(clock.register + i, [values[i]]);
+        }
+      }],
+      ['function 6, per register', async () => {
+        for (let i = 0; i < values.length; i++) {
+          await modbusClient.writeRegister(clock.register + i, values[i]);
+        }
+      }],
+    ];
+    const failures: string[] = [];
+    for (const [name, attempt] of attempts) {
+      try {
+        await attempt();
+        this.log.info(`[${this.config.name}] Inverter clock set via ${name}`);
+        return skew;
+      } catch (error) {
+        failures.push(`${name}: ${describeError(error)}`);
+      }
+    }
+    this.clockWriteUnsupported = true;
+    this.log.warn(
+      `[${this.config.name}] Could not set the inverter clock, giving up on writes (${failures.join(' | ')}). Skew will only be logged at debug level.`,
+    );
+    return skew;
+  }
+
   async readDischargeSettings(
     modbusClient: any,
     includeTimes = false,
@@ -329,9 +424,9 @@ export class DynamicInverterProfile extends InverterProfile {
       // Disabling only clears the enable flag so the stored schedule is preserved
       const registersToWrite: Array<[number, number]> = enable
         ? [
-            [cm.dischargeStartTimeRegister, startValue],
-            [cm.dischargeStopTimeRegister, stopValue],
-          ]
+          [cm.dischargeStartTimeRegister, startValue],
+          [cm.dischargeStopTimeRegister, stopValue],
+        ]
         : [];
 
       if (enable && cm.dischargeStopSocRegister && minimumSoC !== undefined) {
@@ -411,9 +506,9 @@ export class DynamicInverterProfile extends InverterProfile {
       // Disabling only clears the enable flag so the stored schedule is preserved
       const registersToWrite: Array<[number, number]> = enable
         ? [
-            [cm.chargeStartTimeRegister, startValue],
-            [cm.chargeStopTimeRegister, stopValue],
-          ]
+          [cm.chargeStartTimeRegister, startValue],
+          [cm.chargeStopTimeRegister, stopValue],
+        ]
         : [];
 
       if (enable && cm.chargeStopSocRegister) {

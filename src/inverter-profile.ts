@@ -80,6 +80,16 @@ export interface EncodingConfig {
 }
 
 /**
+ * Inverter real-time clock (holding registers).
+ * SixRegisters: year, month, day, hour, minute, second in consecutive registers.
+ * PackedBytes: year|month, day|hour, minute|second as high|low bytes in 3 registers (2-digit year).
+ */
+export interface ClockConfig {
+  register: number;               // First clock register
+  layout: 'SixRegisters' | 'PackedBytes';
+}
+
+/**
  * Complete inverter profile specification.
  * Each inverter manufacturer (Growatt, GoodWe, SolarEdge, etc.) provides one of these.
  * This is the bridge between generic HomeKit operations and manufacturer-specific Modbus registers.
@@ -100,6 +110,7 @@ export interface InverterProfileConfig {
   telemetry: TelemetryMap;        // 1. Read-only metrics (telemetry)
   control: ControlMap;            // 2. Control registers (setpoints)
   encoding: EncodingConfig;       // 3. & 4. Data encoding format
+  clock?: ClockConfig;            // Optional readable/writable inverter clock
 }
 
 /**
@@ -181,6 +192,14 @@ export abstract class InverterProfile {
     stopHour?: number,
     stopSoC?: number,
   ): Promise<boolean>;
+
+  /**
+   * Optional: Compare the inverter clock with the host's local time and correct it when it drifts.
+   * Returns the skew in seconds (inverter minus host) before correction, or null if unsupported.
+   */
+  async syncClock(modbusClient: any, maxSkewSeconds = 60): Promise<number | null> {
+    return null;
+  }
 
   /**
    * Optional: Attempt to auto-detect this inverter type by reading Modbus registers.

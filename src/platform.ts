@@ -145,6 +145,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private pollInverterDataTimer?: NodeJS.Timeout;
   private uploadInverterDataTimer?: NodeJS.Timeout;
   private pollAppSettingsTimer?: NodeJS.Timeout;
+  private clockSyncTimer?: NodeJS.Timeout;
 
   private dataBuffer!: DataBuffer;
   private solarChargeUploader!: SolarChargeUploader;
@@ -773,6 +774,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         this.pollAppSettingsInterval,
       );
 
+      await this.syncInverterClock();
+      this.clockSyncTimer = setInterval(
+        () => this.syncInverterClock(),
+        15 * 60 * 1000,
+      );
+
       this.log.info(
         `📊 Polling started: every ${this.pollInverterDataInterval}ms | Upload: every ${this.uploadInverterDataInterval}ms | Settings sync: every ${this.pollAppSettingsInterval}ms`,
       );
@@ -796,7 +803,20 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     }
   }
 
+  /** Keeps the inverter RTC aligned with host local time (e.g. across DST changes). */
+  private async syncInverterClock(): Promise<void> {
+    try {
+      await this.activeProfile?.syncClock(this.modbusClient);
+    } catch (error: any) {
+      this.log.warn(`⚠️ Inverter clock sync failed: ${error?.message ?? error}`);
+    }
+  }
+
   private stopTimers(): void {
+    if (this.clockSyncTimer) {
+      clearInterval(this.clockSyncTimer);
+      this.clockSyncTimer = undefined;
+    }
     if (this.pollInverterDataTimer) {
       clearInterval(this.pollInverterDataTimer);
       this.pollInverterDataTimer = undefined;

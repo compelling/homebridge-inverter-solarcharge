@@ -42,5 +42,9 @@
   "encoding": {
     "timeFormat": "PackedBytes",
     "endianness": "BigEndian"
+  },
+  "clock": {
+    "register": 45,
+    "layout": "SixRegisters"
   }
 }

@@ -248,6 +248,16 @@ Different manufacturers encode time differently:
 | `MinutesFromMidnight` | `120` = 02:00 | GoodWe: `hour * 60 + minute` |
 | `RawInteger` | `2` = 02:00 | SolaX: Direct hour value |
 
+### Inverter Clock Sync
+
+Charge/sell windows are compared against the inverter's own clock, which has no DST awareness. If a profile has an optional `clock` block, the plugin checks the inverter clock at startup and every 15 minutes and sets it to the host's local time when it drifts by more than 60 seconds (e.g. after a daylight-saving change).
+
+```json
+"clock": { "register": 62, "layout": "PackedBytes" }
+```
+
+`layout` is `SixRegisters` (year, month, day, hour, minute, second in consecutive registers) or `PackedBytes` (year|month, day|hour, minute|second in 3 registers). Currently configured for Growatt SPH, Deye/Sunsynk and GoodWe ET; profiles without a `clock` block are skipped.
+
 ### Byte Order (Endianness)
 
 - **BigEndian** (standard Modbus): MSB first
