@@ -16,6 +16,7 @@ export interface InverterSettingsPayload {
   sellTo: number;   // E.g. 21 (or 0 if deactivated)
   buyFrom: number;  // E.g. 2  (or 0 if deactivated)
   buyTo: number;    // E.g. 6  (or 0 if deactivated)
+  profileName?: string; // Inverter profile reported by the server
 }
 
 export interface ChargerSettingsPayload {
@@ -74,6 +75,7 @@ export class SolarChargeUploader {
       sellTo?: string | number;
       buyFrom?: string | number;
       buyTo?: string | number;
+      profileName?: string;
     };
 
       if (!data) {
@@ -101,6 +103,7 @@ export class SolarChargeUploader {
         sellTo: sellToHour,
         buyFrom: buyFromHour,
         buyTo: buyToHour,
+        profileName: data.profileName || undefined,
       };
 
     } catch (error: unknown) {

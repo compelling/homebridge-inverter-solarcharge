@@ -129,6 +129,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private readonly ipAddress?: string;
   private readonly inverterProfileName: string = 'auto';
   private activeProfile?: InverterProfile;
+  private lastUploadedInverterProfile?: string;
   private readonly brand!: string; // Inverter brand (e.g., 'Growatt')
   private readonly inverterType!: string; // Inverter type (e.g., 'SPH3600')
   private readonly pollInverterDataInterval: number = 5000; // // Fixed polling interval: always 5 seconds for HomeKit responsiveness
@@ -1137,6 +1138,12 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       const profile = this.activeProfile;
       if (!profile) {
         return;
+      }
+
+      const detectedName = profile.config.name;
+      if (api.profileName !== detectedName && this.lastUploadedInverterProfile !== detectedName) {
+        await this.solarChargeUploader.setInverterSettings(api, detectedName);
+        this.lastUploadedInverterProfile = detectedName;
       }
 
       const apply = async (
