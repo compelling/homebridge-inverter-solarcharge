@@ -1,0 +1,27 @@
+{
+  "name": "Keba_XSeries",
+  "manufacturer": "Keba",
+  "model": "KEcontact X-series (P30, P30 c-series, etc.)",
+  "connectionType": "TCP",
+  "connection": {
+    "defaultTcpPort": 502,
+    "modbusSlaveId": 1,
+    "supportsRtu": true
+  },
+  "control": {
+    "currentLimitRegister": 100,
+    "currentLimitRegisterHex": "0x64",
+    "dataType": "uint16",
+    "scalingFactor": 0.1,
+    "scalingNote": "Values in 0.1A increments; e.g., 160 = 16.0A",
+    "writeFunction": "writeSingleRegister"
+  },
+  "encoding": {
+    "endianness": "BigEndian"
+  },
+  "source": "https://modbusconnect.com/configurations/keba-kecontact-p30",
+  "detection": {
+    "type": "modbus",
+    "probeRegister": 100
+  }
+}

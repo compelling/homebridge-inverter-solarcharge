@@ -11,7 +11,7 @@ A dynamic platform plugin for Homebridge that integrates solar inverters / home 
 ## Features
 
 - **🔄 Solar Inverter Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar
-- **🔄 EV Charger Multi-Brand Support**: Wallbox, Alfen, ABB, go-e and Tesla (only Gen 2 via direct RS-485)
+- **🔄 EV Charger Multi-Brand Support**: Wallbox, Alfen, ABB, go-e, Keba (X-Series), and Tesla (only Gen 2 via direct RS-485)
 
 **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen (see separate section)
 
@@ -471,6 +471,7 @@ EV chargers have no schedule register, so the plugin acts as the scheduler. Ever
   <tr><td>Wallbox<br>(Pulsar Plus / Max)</td><td>wallbox-pulsar.json</td><td>Modbus TCP</td><td>Register 512, <code>uint16</code>, whole amps</td><td>502</td><td><a href="https://support.wallbox.com/wp-content/uploads/ht_kb/2024/09/EN_EMS_Installation-Guide.pdf">Wallbox EMS Installation Guide (PDF)</a></td></tr>
   <tr><td>Alfen<br>(Eve Single S-line / Pro)</td><td>alfen-eve.json</td><td>Modbus TCP</td><td>Register 1210-1211, <code>float32</code>, written with writeMultipleRegisters</td><td>502</td><td><a href="https://github.com/tabnul/alfen-eve-modbus-ha">alfen-eve-modbus-ha (Modbus register map)</a></td></tr>
   <tr><td>ABB<br>(Terra AC)</td><td>abb-terra-ac.json</td><td>Modbus TCP (RTU optional)</td><td>Register 16640 (<code>0x4100</code>), <code>uint16</code>, scale 0.1 (0.01 on some firmware)</td><td>502</td><td><a href="https://library.e.abb.com/public/982c2befa2734d259e66d76fa4a7ba77/ABB_Terra_AC_Charger_ModbusCommunication_v1.11.pdf">ABB Terra AC Modbus Communication (PDF)</a></td></tr>
+  <tr><td>Keba<br>(KEcontact X-Series, P30, P30 c-series)</td><td>keba-xseries.json</td><td>Modbus TCP (RTU optional)</td><td>Register 100 (<code>0x64</code>), <code>uint16</code>, scale 0.1</td><td>502</td><td><a href="https://modbusconnect.com/configurations/keba-kecontact-p30">Keba KEcontact Modbus Configuration</a></td></tr>
   <tr><td>go-e<br>(Gemini / HOME)</td><td>go-e-gemini.json</td><td>HTTP API v2</td><td><code>GET /api/set?frc=0&amp;amp=N</code>, pause with <code>frc=1</code></td><td>80</td><td><a href="https://github.com/goecharger/go-eCharger-API-v2">go-eCharger API v2 (GitHub)</a></td></tr>
   <tr><td>Tesla<br>(Wall Connector Gen 2, direct RS-485)</td><td>tesla-twc-rs485.json</td><td>Serial (TWC load-share master)</td><td>Heartbeat with offered amps; 0 A to stop</td><td>9600 baud (<code>chargerSerialPath</code>)</td><td><a href="https://github.com/ngardiner/TWCManager">TWCManager (protocol reference)</a></td></tr>
 </table>
