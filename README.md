@@ -10,7 +10,7 @@ A dynamic platform plugin for Homebridge that integrates solar inverters / home 
 
 ## Features
 
-- **🔄 Solar Inverter Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar
+- **🔄 Solar Inverter Multi-Brand Support**: Growatt, GoodWe, SolaX, SolarEdge, Fronius, Deye/Sunsynk, Sofar, Huawei
 - **🔄 EV Charger Multi-Brand Support**: Wallbox, Alfen, ABB, go-e, Keba (X-Series), and Tesla (only Gen 2 via direct RS-485)
 
 **📱 HomeKit Integration**: Real-time telemetry displayed on Home screen (see separate section)
@@ -458,6 +458,7 @@ profiles/                  # JSON inverter profiles (master source)
   <tr><td>Fronius<br>(Primo, Symo, Gen24, Tauro)</td><td>fronius_sunspec.json</td><td>TCP</td><td>1 - 3</td><td>Yes (Gen24 series)</td><td>Port 502</td><td>SunSpec standard maps (Inverter blocks and Meter DID 201-203) are available in the <a href="https://praktis.sk/___files/produkty/dokumenty/Fronius_Datamanager_Modbus_TCP&RTU_20230209_233931.pdf">Fronius Datamanager Modbus Guide (PDF)</a>. Advanced blocks are linked via the <a href="https://sunspec.org/specifications/">SunSpec Specifications Library</a>.</td></tr>
   <tr><td>Deye / Sunsynk / Solark<br>(Hybrid Series)</td><td>deye_hybrid.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes</td><td>9600 baud / Port 502</td><td>Advanced EMS Time-of-Use control registers decoded in the <a href="https://github.com/Developer089/deye-modbus-ha">deye-modbus-ha Project</a>.</td></tr>
   <tr><td>Sofar Solar<br>(HYD Series &amp; Grid-tied)</td><td>sofar_hyd.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes (HYD series)</td><td>9600 baud / Port 502</td><td>Target register block frames extracted directly from the <a href="https://github.com/home-assistant/core/tree/dev/homeassistant/components/sofar">Home Assistant Sofar Inverter Component</a>.</td></tr>
+  <tr><td>Huawei<br>(SUN2000-3K to SUN2000-20K, residential &amp; commercial)</td><td>huawei_sun2000.json</td><td>RTU &amp; TCP</td><td>1 - 3</td><td>Yes</td><td>9600 baud / Port 502</td><td>Official Huawei SUN2000 Modbus documentation at <a href="https://support.huawei.com/enterprise/it/doc/EDOC1100480297">Huawei Support Portal</a>. Supports residential (3K-10K) and commercial (10K-20K) models with optional battery storage.</td></tr>
 </table>
 
 Add more by creating new JSON profiles.

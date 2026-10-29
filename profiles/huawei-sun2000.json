@@ -1,0 +1,55 @@
+{
+  "name": "Huawei_SUN2000",
+  "manufacturer": "Huawei",
+  "model": "SUN2000-3K to SUN2000-20K (residential / commercial)",
+  "phases": 1,
+  "hasBattery": true,
+  "connectionType": "RTU",
+  "connection": {
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "modbusSlaveId": 0
+  },
+  "telemetry": {
+    "solarPowerRegister": 32016,
+    "loadPowerRegister": 32020,
+    "exportPowerRegister": 32022,
+    "importPowerRegister": 32024,
+    "batteryChargePowerRegister": 37780,
+    "batteryDischargePowerRegister": 37781,
+    "batterySocRegister": 37760,
+    "u32Registers": [
+      32016,
+      32020,
+      32022,
+      32024,
+      37780,
+      37781
+    ],
+    "scalingFactor": 0.001
+  },
+  "control": {
+    "dischargeRateRegister": 40224,
+    "dischargeStopSocRegister": 40226,
+    "dischargeStartTimeRegister": 40228,
+    "dischargeStopTimeRegister": 40229,
+    "dischargeEnableRegister": 40230,
+    "chargeRateRegister": 40220,
+    "chargeStopSocRegister": 40221,
+    "chargeStartTimeRegister": 40222,
+    "chargeStopTimeRegister": 40223,
+    "chargeGridEnableRegister": 40225
+  },
+  "encoding": {
+    "timeFormat": "PackedBytes",
+    "endianness": "BigEndian"
+  },
+  "clock": {
+    "register": 40000,
+    "layout": "SixRegisters"
+  },
+  "source": "https://support.huawei.com/enterprise/it/doc/EDOC1100480297",
+  "note": "Supports residential SUN2000-3K to SUN2000-20K models with optional battery. Modbus RTU via serial connection. Slave ID 0 for RTU."
+}
