@@ -242,4 +242,4 @@ console.log(p ? '✓ Loaded' : '✗ Not found');
 
 ---
 
-**Remember:** README  updates are NOT optional. They ensure users can discover and properly configure the new device support. Always complete Step 4 before considering the task done.
+**Remember:** README updates are NOT optional. They ensure users can discover and properly configure the new device support. Always complete Step 4 before considering the task done.
