@@ -56,6 +56,7 @@ Either fill in the plugin settings UI to configure the plugin or add this to you
 - `name`, `platform`: Dont change this
 - `serialPort`: Serial device (RTU) or network address (TCP)
 - `inverterProfile`: `"auto"` (detect from config brand) or profile name (e.g., `"Growatt_SPH"`)
+- `killSwitch`: Enable **Inverter Write Kill Switch** in the Homebridge settings UI, or set `killSwitch` to `true` in `config.json`, to block inverter Modbus writes (charge/discharge schedules and clock corrections). Defaults to `false`. Inverter readings and SolarCharge uploads continue; EV charger control is not blocked. Blocked HomeKit inverter controls report a failure rather than changing the inverter or its SolarCharge schedule. Restart Homebridge after changing the setting.
 - `plantId`, `serialNum`: SolarCharge API credentials for syncing buy/sell times and uploading metrics
 - `chargerProfile` (optional): `"auto"` (default, detects the charger at `chargerIpAddress`) or a charger profile name (e.g., `"Alfen_Eve"`)
 - `chargerId`: SolarCharge Charger ID, used instead of `plantId` for the charger API. EV charging is disabled when empty.

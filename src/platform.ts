@@ -128,6 +128,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
   private readonly serialPort?: string;
   private readonly ipAddress?: string;
   private readonly inverterProfileName: string = 'auto';
+  private readonly killSwitch: boolean;
   private activeProfile?: InverterProfile;
   private lastUploadedInverterProfile?: string;
   private readonly brand!: string; // Inverter brand (e.g., 'Growatt')
@@ -169,6 +170,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     public readonly api: API,
   ) {
     this.debugLogging = config?.logLevel === 'debug';
+    this.killSwitch = config?.killSwitch === true;
     if (!config || !config.plantId || !config.serialNum) {
       this.log.warn(
         'Plugin is not configured yet. Please enter your plantId and serialNum in the Homebridge UI.',
@@ -199,6 +201,11 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
     this.log.info(
       `🔌 Inverter plugin initialized | Profile: ${this.inverterProfileName} | Connection: ${this.ipAddress ? `TCP ${this.ipAddress}` : `RTU ${this.serialPort}`}`,
     );
+    if (this.killSwitch) {
+      this.log.warn(
+        'Inverter write kill switch is enabled: inverter Modbus writes are blocked; EV charger control is unaffected.',
+      );
+    }
 
     this.api.on('didFinishLaunching', () => {
       void this.startCharger();
@@ -895,6 +902,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
         const profile = InverterProfileFactory.createFromName(
           matchedProfileName,
           this.log,
+          this.killSwitch,
         );
         this.activeProfile = profile || undefined;
         if (profile) {
@@ -934,6 +942,7 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
       const profile = InverterProfileFactory.createFromName(
         this.inverterProfileName,
         this.log,
+        this.killSwitch,
       );
       this.activeProfile = profile || undefined;
       if (profile) {
@@ -1167,7 +1176,8 @@ export class InverterSolarChargePlatform implements DynamicPlatformPlugin {
           return;
         }
         this.log.info(
-          `🔄 App ${kind} settings changed -> ${wantEnable ? `${from}:00-${to}:00` : 'OFF'}; writing to inverter`,
+          `🔄 App ${kind} settings changed -> ${wantEnable ? `${from}:00-${to}:00` : 'OFF'}; ` +
+            (this.killSwitch ? 'inverter write blocked by kill switch' : 'writing to inverter'),
         );
         const ok =
           kind === 'buy'

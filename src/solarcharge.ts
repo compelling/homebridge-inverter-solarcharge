@@ -37,8 +37,8 @@ export class SolarChargeUploader {
     private readonly plantId: string,
     private readonly serialNum: string,
     private readonly log: Logging,
-    private readonly baseUrl: string = 'https://groshapp.com/test', // Default test server
-    // private readonly baseUrl: string = 'https://compellingsoftware.com/edge', // Production server
+    // private readonly baseUrl: string = 'https://groshapp.com/test', // test server
+    private readonly baseUrl: string = 'https://gr1.compellingsoftware.com/edge', // production server
     private readonly chargerId?: string, // EV charger ID (chargers use chargerId, not plantId)
   ) {}
 

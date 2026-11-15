@@ -51,6 +51,12 @@
         "default": "auto",
         "description": "Set to 'auto' to detect your inverter automatically during startup. Or manually select your brand/model to skip detection."
       },
+      "killSwitch": {
+        "title": "Inverter Write Kill Switch",
+        "type": "boolean",
+        "default": false,
+        "description": "Block inverter Modbus writes, including charge/discharge schedules and clock updates. Readings and EV charger control are unaffected."
+      },
       "chargerProfile": {
         "title": "EV Charger Profile (optional)",
         "type": "string",

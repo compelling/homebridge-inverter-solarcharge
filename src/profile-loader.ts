@@ -108,9 +108,8 @@ export class ProfileLoader {
  */
 export class DynamicInverterProfile extends InverterProfile {
   readonly config: InverterProfileConfig;
-  readonly killSwitch = false; // during developement only log updates but do not perform actual Modbus writes
 
-  constructor(config: InverterProfileConfig, log: Logging) {
+  constructor(config: InverterProfileConfig, log: Logging, readonly killSwitch = false) {
     super(log);
     this.config = config;
     this.log.info(
@@ -394,7 +393,7 @@ export class DynamicInverterProfile extends InverterProfile {
       this.log.warn(
         `[${this.config.name}] SetDischargeSettings blocked by kill switch`,
       );
-      return true;
+      return false;
     }
     try {
       const cm = this.config.control;
@@ -479,7 +478,7 @@ export class DynamicInverterProfile extends InverterProfile {
         this.log.warn(
           `[${this.config.name}] SetChargeSettings blocked by kill switch`,
         );
-        return true;
+        return false;
       }
 
       const cm = this.config.control;
@@ -608,20 +607,22 @@ export class InverterProfileFactory {
   static createFromName(
     profileName: string,
     log: Logging,
+    killSwitch = false,
   ): InverterProfile | null {
     const config = ProfileLoader.getProfile(profileName);
     if (!config) {
       log.error(`Profile not found: ${profileName}`);
       return null;
     }
-    return new DynamicInverterProfile(config, log);
+    return new DynamicInverterProfile(config, log, killSwitch);
   }
 
   static createFromConfig(
     config: InverterProfileConfig,
     log: Logging,
+    killSwitch = false,
   ): InverterProfile {
-    return new DynamicInverterProfile(config, log);
+    return new DynamicInverterProfile(config, log, killSwitch);
   }
 
   static listAvailable(): string[] {
