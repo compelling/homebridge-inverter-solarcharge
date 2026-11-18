@@ -13,17 +13,17 @@ export interface AggregatedMetrics {
 
 export interface InverterSettingsPayload {
   sellFrom: number; // E.g. 17 (or 0 if deactivated)
-  sellTo: number;   // E.g. 21 (or 0 if deactivated)
-  buyFrom: number;  // E.g. 2  (or 0 if deactivated)
-  buyTo: number;    // E.g. 6  (or 0 if deactivated)
+  sellTo: number; // E.g. 21 (or 0 if deactivated)
+  buyFrom: number; // E.g. 2  (or 0 if deactivated)
+  buyTo: number; // E.g. 6  (or 0 if deactivated)
   profileName?: string; // Inverter profile reported by the server
 }
 
 export interface ChargerSettingsPayload {
   from: number; // E.g. 17 (or 0 if deactivated)
-  to: number;   // E.g. 21 (or 0 if deactivated)
-  amps: number;  // E.g. 6  (or 0 if deactivated)
-  voltage: number;  // E.g. 230 (or 690 is three phased charger)
+  to: number; // E.g. 21 (or 0 if deactivated)
+  amps: number; // E.g. 6  (or 0 if deactivated)
+  voltage: number; // E.g. 230 (or 690 is three phased charger)
   maxAmps?: number; // Charger max current set in the SC app (falls back to 16)
   profileName?: string; // Detected or selected charger profile, e.g. "Alfen_Eve"
 }
@@ -43,9 +43,9 @@ export class SolarChargeUploader {
   ) {}
 
   /**
- * Fetches the current inverter settings from the SolarCharge API backend
- * @returns The parsed InverterSettingsPayload or null if the request fails
- */
+   * Fetches the current inverter settings from the SolarCharge API backend
+   * @returns The parsed InverterSettingsPayload or null if the request fails
+   */
   public async getInverterSettings(): Promise<InverterSettingsPayload | null> {
     try {
       const params = {
@@ -59,7 +59,7 @@ export class SolarChargeUploader {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'Content-Type': 'application/json',
         },
       });
@@ -70,13 +70,13 @@ export class SolarChargeUploader {
       }
 
       // The API expects a JSON response that matches your PHP schema (sellFrom, sellTo, buyFrom, buyTo)
-      const data = await response.json() as {
-      sellFrom?: string | number;
-      sellTo?: string | number;
-      buyFrom?: string | number;
-      buyTo?: string | number;
-      profileName?: string;
-    };
+      const data = (await response.json()) as {
+        sellFrom?: string | number;
+        sellTo?: string | number;
+        buyFrom?: string | number;
+        buyTo?: string | number;
+        profileName?: string;
+      };
 
       if (!data) {
         this.log.error('SolarCharge API returned an empty or invalid JSON response.');
@@ -86,16 +86,18 @@ export class SolarChargeUploader {
       // Implicit logic: If the value is "00" (or disabled), we map it to hour 0
       // Otherwise we convert the text string (e.g. "17") to a pure integer
       const sellFromHour = data.sellFrom !== '00' && data.sellFrom !== undefined ? parseInt(data.sellFrom.toString(), 10) : 0;
-      const sellToHour   = data.sellTo   !== '00' && data.sellTo   !== undefined ? parseInt(data.sellTo.toString(), 10) : 0;
-    
-      const buyFromHour  = data.buyFrom  !== '00' && data.buyFrom  !== undefined ? parseInt(data.buyFrom.toString(), 10) : 0;
-      const buyToHour    = data.buyTo    !== '00' && data.buyTo    !== undefined ? parseInt(data.buyTo.toString(), 10) : 0;
+      const sellToHour = data.sellTo !== '00' && data.sellTo !== undefined ? parseInt(data.sellTo.toString(), 10) : 0;
+
+      const buyFromHour = data.buyFrom !== '00' && data.buyFrom !== undefined ? parseInt(data.buyFrom.toString(), 10) : 0;
+      const buyToHour = data.buyTo !== '00' && data.buyTo !== undefined ? parseInt(data.buyTo.toString(), 10) : 0;
 
       // Define the state (On/Off) based on the implicit "00" rule
       const sellActive = sellFromHour !== 0 || sellToHour !== 0;
-      const buyActive  = buyFromHour  !== 0 || buyToHour  !== 0;
+      const buyActive = buyFromHour !== 0 || buyToHour !== 0;
 
-      this.log.info(`[API Get] Successfully retrieved configuration -> Sell Active: ${sellActive} (${sellFromHour}-${sellToHour}) | Buy Active: ${buyActive} (${buyFromHour}-${buyToHour})`);
+      this.log.info(
+        `[API Get] Successfully retrieved configuration -> Sell Active: ${sellActive} (${sellFromHour}-${sellToHour}) | Buy Active: ${buyActive} (${buyFromHour}-${buyToHour})`,
+      );
 
       // Return data formatted precisely according to your InverterSettingsPayload interface
       return {
@@ -105,7 +107,6 @@ export class SolarChargeUploader {
         buyTo: buyToHour,
         profileName: data.profileName || undefined,
       };
-
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.log.error(`Could not fetch inverter settings from SolarCharge API: ${errorMsg}`);
@@ -114,49 +115,42 @@ export class SolarChargeUploader {
   }
 
   /**
- * Uploads current SPH settings to the SolarCharge API, mapping 0 to "00" implicitly.
- */
+   * Uploads current SPH settings to the SolarCharge API, mapping 0 to "00" implicitly.
+   */
   public async setInverterSettings(settings: InverterSettingsPayload, profileName?: string): Promise<void> {
     try {
-    // Formats the numbers as 2-digit strings. If the number is 0, it automatically becomes "00"
+      // Formats the numbers as 2-digit strings. If the number is 0, it automatically becomes "00"
       const sellFromStr: string = String(settings.sellFrom).padStart(2, '0');
-      const sellToStr: string   = String(settings.sellTo).padStart(2, '0');
-    
-      const buyFromStr: string  = String(settings.buyFrom).padStart(2, '0');
-      const buyToStr: string    = String(settings.buyTo).padStart(2, '0');
+      const sellToStr: string = String(settings.sellTo).padStart(2, '0');
+
+      const buyFromStr: string = String(settings.buyFrom).padStart(2, '0');
+      const buyToStr: string = String(settings.buyTo).padStart(2, '0');
       const url = `${this.baseUrl}/invertersettings`;
-      const response = await fetch(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            plantId: this.plantId,
-            serialNum: this.serialNum,
-            branding: 'sc',
-            profileName,
-            sellFrom: sellFromStr,
-            sellTo: sellToStr,
-            buyFrom: buyFromStr,
-            buyTo: buyToStr,
-          }),
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      );
+        body: JSON.stringify({
+          plantId: this.plantId,
+          serialNum: this.serialNum,
+          branding: 'sc',
+          profileName,
+          sellFrom: sellFromStr,
+          sellTo: sellToStr,
+          buyFrom: buyFromStr,
+          buyTo: buyToStr,
+        }),
+      });
 
       if (!response.ok) {
-        this.log.error(
-          `SolarCharge API error updating settings: ${response.status} ${response.statusText}`,
-        );
+        this.log.error(`SolarCharge API error updating settings: ${response.status} ${response.statusText}`);
       } else {
         this.log.debug(`Successfully uploaded inverter settings to SolarCharge API -> Sell: ${sellFromStr}-${sellToStr} | Buy: ${buyFromStr}-${buyToStr}`);
       }
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(
-        `Could not upload inverter settings to SolarCharge API: ${errorMsg}`,
-      );
+      this.log.error(`Could not upload inverter settings to SolarCharge API: ${errorMsg}`);
     }
   }
 
@@ -176,7 +170,7 @@ export class SolarChargeUploader {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'Content-Type': 'application/json',
         },
       });
@@ -186,7 +180,7 @@ export class SolarChargeUploader {
         return null;
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         from?: string | number;
         to?: string | number;
         amps?: string | number;
@@ -261,50 +255,56 @@ export class SolarChargeUploader {
   /**
    * Upload averaged metrics to SolarCharge API
    * @param metrics Aggregated power metrics (averaged over polling period)
-   * @param startTime Time string in HH:MM format (e.g., "14:05")
-   * @param endTime Time string in HH:MM format (e.g., "14:10")
+   * @param startTime Time string in HH:MM format (e.g., '14:05')
+   * @param endTime Time string in HH:MM format (e.g., '14:10')
    */
-  public async uploadMetrics(
-    metrics: AggregatedMetrics,
-    startTime: string,
-    endTime: string,
-  ): Promise<void> {
+  public async uploadMetrics(metrics: AggregatedMetrics, startTime: string, endTime: string): Promise<void> {
     const url = `${this.baseUrl}/inverterdata`;
     try {
-      const response = await fetch(
-        url, 
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            plantId: this.plantId,
-            serialNum: this.serialNum,
-            branding: 'sc',
-            start: startTime, // e.g., "14:05"
-            end: endTime, // e.g., "14:10"
-            solar: metrics.solar, // Averaged kW (ppv - produced solar power)
-            usage: metrics.usage, // Averaged kW (local load consumption)
-            export: metrics.export, // Averaged kW (export to grid)
-            pack: metrics.pack, // Averaged kW (grid import / battery charge)
-            soc: metrics.soc, // Latest battery state of charge as float 0-1
-          }),
+      // Calculate the correct date based on startTime
+      // If endTime < startTime (e.g., '23:55-00:00'), the sample crosses midnight
+      // and belongs to the day of startTime, not today
+      const now = new Date();
+      const [startHour, startMin] = startTime.split(':').map(Number);
+      const [endHour, endMin] = endTime.split(':').map(Number);
+
+      const sampleDate = new Date(now);
+
+      // If endTime < startTime, it means we crossed midnight, so use previous day's date
+      if (endHour * 60 + endMin < startHour * 60 + startMin) {
+        sampleDate.setDate(sampleDate.getDate() - 1);
+      }
+
+      const date = sampleDate.toLocaleDateString('en-CA');
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      );
+        body: JSON.stringify({
+          plantId: this.plantId,
+          serialNum: this.serialNum,
+          branding: 'sc',
+          date, // inverter date in YYYY-MM-DD format, e.g., "2024-06-30"
+          start: startTime, // e.g., "14:05"
+          end: endTime, // e.g., "14:10"
+          solar: metrics.solar, // Averaged kW (ppv - produced solar power)
+          usage: metrics.usage, // Averaged kW (local load consumption)
+          export: metrics.export, // Averaged kW (export to grid)
+          pack: metrics.pack, // Averaged kW (grid import / battery charge)
+          soc: metrics.soc, // Latest battery state of charge as float 0-1
+        }),
+      });
 
       if (!response.ok) {
-        this.log.error(
-          `SolarCharge API error: ${response.status} ${response.statusText}`,
-        );
+        this.log.error(`SolarCharge API error: ${response.status} ${response.statusText}`);
       } else {
         this.log.debug('Successfully uploaded aggregated data to SolarCharge API');
       }
     } catch (error: unknown) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log.error(
-        `Could not upload data to SolarCharge API: ${errorMsg}`,
-      );
+      this.log.error(`Could not upload data to SolarCharge API: ${errorMsg}`);
     }
   }
 }
