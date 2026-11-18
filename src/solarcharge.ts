@@ -286,14 +286,14 @@ export class SolarChargeUploader {
           plantId: this.plantId,
           serialNum: this.serialNum,
           branding: 'sc',
-          date, // inverter date in YYYY-MM-DD format, e.g., "2024-06-30"
-          start: startTime, // e.g., "14:05"
-          end: endTime, // e.g., "14:10"
+          date, // inverter date in YYYY-MM-DD format, e.g., '2024-06-30'
+          start: startTime, // e.g., '14:05'
+          end: endTime, // e.g., '14:10'
           solar: metrics.solar, // Averaged kW (ppv - produced solar power)
           usage: metrics.usage, // Averaged kW (local load consumption)
           export: metrics.export, // Averaged kW (export to grid)
           pack: metrics.pack, // Averaged kW (grid import / battery charge)
-          soc: metrics.soc, // Latest battery state of charge as float 0-1
+          soc: Math.round((metrics.soc ?? 0) * 100), // Battery state of charge as integer percentage 0-100
         }),
       });
 
